@@ -1,0 +1,68 @@
+# Pipe class code → material group
+# Groups: CS (Carbon/Low-Alloy Steel), SS (Stainless/Duplex/Alloy), FRP (Fiber-Reinforced Plastic/GRE)
+# If a code is not listed here → group resolves to UNKNOWN → line is flagged NEEDS REVIEW
+
+groups:
+  CS:
+    description: "Carbon Steel and Low-Alloy Steel — use chart_1 for classification"
+    codes:
+      - BA1
+      - BA2
+      - BB1
+      - BB1U
+      - BB2
+      - BB3
+      - BB4
+      - BB5
+      - BB6
+      - BP1     # CS, but if jacketed=True flag is also set the jacketed exception fires in Step 2
+      - CB1
+      - CB2
+      - CB3
+      - CJ1     # Low Alloy Steel — treated as CS for chart lookup
+      - CP1
+      - CS      # Carbon Steel (generic code used in some project files)
+      - FB1
+      - FJ1     # Low Alloy Steel — treated as CS for chart lookup
+      # Q37027 MOC codes (Carbon Steel variants)
+      - CSG     # Galvanized Carbon Steel — same thermal chart as plain CS
+      - CS300   # Carbon Steel 300 designation — treated as CS
+      - RLCS    # Rubber-Lined Carbon Steel — substrate is CS for stress purposes
+
+  SS:
+    description: "Stainless Steel, Duplex, and Other Alloy Metals — use chart_2 for classification"
+    codes:
+      - BD1
+      - BD2
+      - BD2U
+      - BG1
+      - BG2
+      - BS1
+      - BS2
+      - BS3
+      - CD1
+      - CD2
+      - CG1
+      - CG2
+      - CS1
+      - ES2
+      - GC1
+      - GD1
+      - GD2
+      - KD1
+      # Q37027 MOC codes (Stainless / special alloy)
+      - SS      # Stainless Steel (generic MOC code)
+      - PTFECS  # PTFE-lined CS — treat as Other Metallic (SS chart) per Q37027 spec
+
+  FRP:
+    description: "Fiber-Reinforced Plastic / Glass-Reinforced Epoxy — always Level 1 (Step 1)"
+    codes:
+      - BK1
+      - BK2
+      - BK3
+      - BK4
+      - BV1
+      - CK3
+      # Q37027 MOC codes (non-metallic)
+      - HDPE    # High-Density Polyethylene — non-metallic, always Level 1
+      - FRP     # Fiber-Reinforced Plastic (explicit MOC code)

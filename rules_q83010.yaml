@@ -1,0 +1,380 @@
+# SCLL Tool — Rules for project Q83010 (TSP S – SAFI)
+# Input file: Q83010-00-00-PR-LST-00003.xlsx  (sheet "Line List")
+#
+# Key differences from the generic rules.yaml template:
+#   • Multi-row header → excel_config tells the parser which row is the header
+#   • Size stored in mm   → size_config.unit: "mm" with mm_to_nps lookup
+#   • Scope in free-text  → scope.mode: "text_keywords" (blank = in scope)
+#   • FROM/TO are full descriptive names → detection_mode: "keyword"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXCEL FILE LAYOUT
+# ─────────────────────────────────────────────────────────────────────────────
+excel_config:
+  sheet_name: "Line List"
+  header_row: 9        # 0-indexed row that contains column names (Excel row 10)
+  skip_rows: [10, 11, 12]  # skip units row + 2 empty rows after the header
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COLUMN MAPPINGS  (all headers are stripped of leading/trailing whitespace)
+# ─────────────────────────────────────────────────────────────────────────────
+column_mappings:
+  line_number:          "LINE NUMBER"
+  size:                 "LINE SIZE"               # values are in mm — see size_config
+  design_temperature:   "DESIGN TEMPERATURE - MAX"
+  material:             "PIPING MATERIAL CLASS"
+  fluid_service:        "SERVICE DESCRIPTION"
+  from_equipment:       "FROM"
+  to_equipment:         "TO"
+  scope:                "NOTES/REMARKS"           # blank = in scope; see scope section
+  inlet_pressure:       "DESIGN PRESSURE - INTERNAL"  # used for relief check
+
+  # Boolean flag columns (Y = True; absent column = all-False)
+  relief_line:          "BLOWDOWN OR RELIEF LINE (Y / N)"
+  vibration:            "SLUG FLOW (Y/N)"
+
+  # Remaining flags not present in this file — treated as all-False
+  vacuum:               ""
+  settlement:           ""
+  expansion_joint:      ""
+  jacketed:             ""
+  cement_lined:         ""
+  vertical_tower:       ""
+  ped_category_3:       ""
+  nozzle_load_limit:    ""
+  heavy_wall:           ""
+  differential_settlement: ""
+  cyclic_service:       ""
+  category_m:           ""
+  client_request:       ""
+  underground:          ""
+  schedule_160:         ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SCOPE FILTER
+# mode: "text_keywords" — blank/null cell = in scope; cell containing any
+# exclude_keyword (case-insensitive) = EXCLUDED.
+# ─────────────────────────────────────────────────────────────────────────────
+scope:
+  mode: "text_keywords"
+  exclude_keywords:
+    - "Client"
+    - "client"
+    - "Vendor"
+    - "vendor"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SIZE UNIT CONVERSION
+# The LINE SIZE column stores nominal pipe diameter in millimetres.
+# The tool converts each mm value to NPS (inches) before chart lookup.
+# Values not in the table (e.g. "XX", "TBD", or unusual sizes) → NEEDS REVIEW.
+# ─────────────────────────────────────────────────────────────────────────────
+size_config:
+  unit: "mm"
+  mm_to_nps:
+    15:  0.5
+    20:  0.75
+    25:  1
+    32:  1.25
+    40:  1.5
+    50:  2
+    65:  2.5
+    80:  3
+    100: 4
+    125: 5
+    150: 6
+    200: 8
+    250: 10
+    300: 12
+    350: 14
+    400: 16
+    450: 18
+    500: 20
+    600: 24
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUIRED COLUMNS (internal names)
+# ─────────────────────────────────────────────────────────────────────────────
+required_columns:
+  - line_number
+  - size
+  - design_temperature
+  - material
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BOOLEAN FLAG PARSING
+# ─────────────────────────────────────────────────────────────────────────────
+true_values:
+  - "Y"
+  - "y"
+  - "Yes"
+  - "yes"
+  - "YES"
+  - "TRUE"
+  - "true"
+  - "True"
+  - "1"
+  - "X"
+  - "x"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 2 — EXCEPTION FLAGS
+# Note: relief_line has no extra_condition here because DESIGN PRESSURE values
+# are mostly TBD in this file.  Any blowdown/relief line → Level 1 (conservative).
+# ─────────────────────────────────────────────────────────────────────────────
+exception_flags:
+  - name: relief_line
+    flag: relief_line
+    extra_condition: null
+    reason: "Blowdown or relief line → Level 1"
+
+  - name: vibration
+    flag: vibration
+    extra_condition: null
+    reason: "Slug flow / vibration service → Level 1"
+
+  - name: cement_lined
+    flag: cement_lined
+    extra_condition: null
+    reason: "Cement-brick, refractory, or glass-lined pipe → Level 1"
+
+  - name: vertical_tower_large
+    flag: vertical_tower
+    extra_condition:
+      field: size
+      operator: ">="
+      value: 4
+    reason: "Vertical line connected to tower, diameter >= 4\" → Level 1"
+
+  - name: jacketed
+    flag: jacketed
+    extra_condition: null
+    reason: "Jacketed piping (differential temperature) → Level 1"
+
+  - name: expansion_joint
+    flag: expansion_joint
+    extra_condition: null
+    reason: "Line has expansion joint or flexible connector → Level 1"
+
+  - name: settlement
+    flag: settlement
+    extra_condition: null
+    reason: "Line subjected to settlement → Level 1"
+
+  - name: ped_category_3_large
+    flag: ped_category_3
+    extra_condition:
+      field: size
+      operator: ">="
+      value: 4
+    reason: "PED Category III line, diameter >= 4\" → Level 1"
+
+  - name: vacuum
+    flag: vacuum
+    extra_condition: null
+    reason: "Vacuum service → Level 1"
+
+  - name: underground_high_temp
+    flag: underground
+    extra_condition:
+      field: design_temperature
+      operator: ">="
+      value: 100
+    reason: "Underground piping with design temperature >= 100°C → Level 1"
+
+  - name: nozzle_load_limit
+    flag: nozzle_load_limit
+    extra_condition: null
+    reason: "Line attached to equipment with published nozzle load limitations → Level 1"
+
+  - name: heavy_wall_large
+    flag: heavy_wall
+    extra_condition:
+      field: size
+      operator: ">="
+      value: 2
+    reason: "Heavy wall pipe, size >= 2\" → Level 1"
+
+  - name: differential_settlement
+    flag: differential_settlement
+    extra_condition: null
+    reason: "Line attached to equipment with differential settlement → Level 1"
+
+  - name: cyclic_service
+    flag: cyclic_service
+    extra_condition: null
+    reason: "Severe cyclic service or hydraulic shock → Level 1"
+
+  - name: category_m
+    flag: category_m
+    extra_condition: null
+    reason: "ASME B31.3 Category M fluid service → Level 1"
+
+  - name: schedule_160
+    flag: schedule_160
+    extra_condition: null
+    reason: "Schedule 160 pipe or OD/WT ratio < 10 → Level 1"
+
+  - name: client_request
+    flag: client_request
+    extra_condition: null
+    reason: "Client request → Level 1"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 3 — STRAIN-SENSITIVE EQUIPMENT
+#
+# detection_mode: "keyword"
+#   FROM/TO cells are full descriptive names (e.g. "MOLTEN SULFUR TRANSFER PUMP 02AP02").
+#   keyword_patterns: checked in order; first match wins.  Case-insensitive.
+#   non_strain_sensitive_keywords: equipment that is NOT strain-sensitive but still
+#     triggers the chart_4 check.  Pipe line numbers and generic locations are
+#     NOT listed here and therefore do NOT trigger chart_4.
+# ─────────────────────────────────────────────────────────────────────────────
+strain_sensitive_equipment:
+  detection_mode: "keyword"
+
+  keyword_patterns:
+    - keywords: ["RECIPROCATING PUMP", "RECIPROCATING COMPRESSOR"]
+      type: "reciprocating_pump"
+      description: "Reciprocating pump or compressor"
+    - keywords: ["PUMP"]
+      type: "centrifugal_pump"
+      description: "Centrifugal pump"
+    - keywords: ["COMPRESSOR"]
+      type: "compressor"
+      description: "Compressor"
+    - keywords: ["TURBINE"]
+      type: "turbine"
+      description: "Turbine"
+    - keywords: ["FIRED HEATER", "HEATER", "FURNACE", "BOILER"]
+      type: "heater"
+      description: "Fired heater / boiler"
+    - keywords: ["AIR COOLER", "FIN FAN", "FIN-FAN", "AERIAL COOLER"]
+      type: "air_cooler"
+      description: "Air-cooled heat exchanger"
+
+  # Non-strain-sensitive equipment — triggers chart_4 check (Step 4)
+  non_strain_sensitive_keywords:
+    - "TANK"
+    - "VESSEL"
+    - "PIT"
+    - "DRUM"
+    - "COIL"
+    - "SEPARATOR"
+    - "COLUMN"
+    - "TOWER"
+    - "FILTER"
+    - "REACTOR"
+    - "BASIN"
+    - "SUMP"
+
+  # Chart 3 classification rules (same as generic spec — do not change)
+  chart_3:
+    - condition_type: "equip_type"
+      equip_types: ["centrifugal_pump", "reciprocating_pump"]
+      reason: "Connected to centrifugal/reciprocating pump → always Level 1"
+      result: "Level 1"
+
+    - condition_type: "temp_threshold"
+      temp_operator: ">="
+      temp_value: 100
+      reason: "Strain-sensitive equipment connection, temperature >= 100°C → Level 1"
+      result: "Level 1"
+
+    - condition_type: "size_temp"
+      size_operator: "<="
+      size_value: 6
+      temp_operator: ">="
+      temp_value: 50
+      reason: "Strain-sensitive equipment connection, size <= 6\", temperature 50–99°C → Level 2"
+      result: "Level 2"
+
+    - condition_type: "size_temp"
+      size_operator: ">"
+      size_value: 6
+      temp_operator: "<"
+      temp_value: 100
+      reason: "Strain-sensitive equipment connection, size > 6\", temperature < 100°C → Level 2"
+      result: "Level 2"
+
+    - condition_type: "fallback"
+      reason: "Strain-sensitive equipment connection, size <= 6\", temperature < 50°C → Level 3"
+      result: "Level 3"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 4 — MATERIAL CHARTS  (identical to generic spec)
+# ─────────────────────────────────────────────────────────────────────────────
+
+chart_1:
+  description: "Carbon Steel / Low-Alloy Steel — per QW2507-00-PE-SPC-00007 Chart 1"
+  size_bands:
+    - max_size: 2
+      l1_threshold: 300
+      l2_threshold: 100
+    - max_size: 3
+      l1_threshold: 250
+      l2_threshold: 100
+    - max_size: 4
+      l1_threshold: 250
+      l2_threshold: 175
+    - max_size: 6
+      l1_threshold: 250
+      l2_threshold: 175
+    - max_size: 8
+      l1_threshold: 250
+      l2_threshold: 150
+    - max_size: 10
+      l1_threshold: 250
+      l2_threshold: 100
+    - max_size: 12
+      l1_threshold: 250
+      l2_threshold: 100
+    - max_size: 14
+      l1_threshold: 150
+      l2_threshold: 50
+    - max_size: 16
+      l1_threshold: 150
+      l2_threshold: 50
+    - max_size: 9999
+      l1_threshold: 50
+      l2_threshold: 0
+
+chart_2:
+  description: "Stainless Steel / Duplex / Other Alloy Metals — per QW2507-00-PE-SPC-00007 Chart 2"
+  size_bands:
+    - max_size: 2
+      l1_threshold: 250
+      l2_threshold: 100
+    - max_size: 3
+      l1_threshold: 250
+      l2_threshold: 175
+    - max_size: 4
+      l1_threshold: 200
+      l2_threshold: 100
+    - max_size: 6
+      l1_threshold: 200
+      l2_threshold: 100
+    - max_size: 12
+      l1_threshold: 200
+      l2_threshold: 50
+    - max_size: 9999
+      l1_threshold: 100
+      l2_threshold: 0
+
+chart_4:
+  description: "Non-strain-sensitive equipment connections — per QW2507-00-PE-SPC-00007 Chart 4"
+  size_bands:
+    - max_size: 3
+      l1_threshold: 300
+      l2_threshold: 175
+    - max_size: 6
+      l1_threshold: 300
+      l2_threshold: 150
+    - max_size: 9999
+      l1_threshold: 250
+      l2_threshold: 100
+
+material_chart_map:
+  CS:  "chart_1"
+  SS:  "chart_2"
+  FRP: null

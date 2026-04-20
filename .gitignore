@@ -26,6 +26,10 @@ Q83010*.xlsx
 Thumbs.db
 desktop.ini
 
+# Web app temp folders (files are ephemeral — not for version control)
+uploads/
+outputs/
+
 # IDEs
 .vscode/
 .idea/

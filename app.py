@@ -430,12 +430,14 @@ def _s(val) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
     print()
     print("  +------------------------------------------+")
     print("  |   SCLL Tool  --  Web Interface           |")
     print("  |   Format-Agnostic Line List Classifier   |")
     print("  +------------------------------------------+")
-    print("  |   http://localhost:5000                  |")
+    print(f"  |   http://localhost:{port:<24}|")
     print("  +------------------------------------------+")
     print()
-    app.run(debug=True, port=5000, threaded=True, use_reloader=False)
+    app.run(debug=debug, port=port, threaded=True, use_reloader=False)

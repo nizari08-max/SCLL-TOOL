@@ -1,85 +1,62 @@
-# SCLL Tool — Classification Rules
-# All thresholds, column mappings, and chart data live here.
-# Engineers: edit this file to update rules. Do NOT modify the Python source files.
-# Temperatures are in °C. Sizes are in inches (nominal pipe size).
-
-# ─────────────────────────────────────────────────────────────────────────────
-# COLUMN MAPPINGS
-# Maps internal field names → exact Excel column header strings in your line list.
-# Edit the right-hand side to match your project's Excel template.
-# ─────────────────────────────────────────────────────────────────────────────
-column_mappings:
-  line_number:          "Line Number"
-  size:                 "Size (inches)"
-  design_temperature:   "Design Temperature (°C)"
-  material:             "Material"
-  fluid_service:        "Fluid/Service"
-  from_equipment:       "FROM"
-  to_equipment:         "TO"
-  scope:                "Scope"
-  inlet_pressure:       "Inlet Pressure (barg)"   # used for relief line check; column may be absent
-
-  # Boolean flag columns — values like Yes/TRUE/1 → True; anything else → False
-  # If a column is absent from the input file it is treated as all-False (no error raised).
-  vacuum:                  "vacuum"
-  vibration:               "vibration"
-  settlement:              "settlement"
-  expansion_joint:         "expansion_joint"
-  jacketed:                "jacketed"
-  relief_line:             "relief_line"
-  cement_lined:            "cement_lined"
-  vertical_tower:          "vertical_tower"
-  ped_category_3:          "ped_category_3"
-  nozzle_load_limit:       "nozzle_load_limit"
-  heavy_wall:              "heavy_wall"
-  differential_settlement: "differential_settlement"
-  cyclic_service:          "cyclic_service"
-  category_m:              "category_m"
-  client_request:          "client_request"
-  underground:             "underground"
-  schedule_160:            "schedule_160"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SCOPE FILTER
-# Rows whose Scope value is in include_values are kept for classification.
-# All other rows are marked EXCLUDED (grey in output).
-# ─────────────────────────────────────────────────────────────────────────────
-scope:
-  include_values:
-    - "JESA"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# REQUIRED COLUMNS (internal names from column_mappings above)
-# The tool raises a clear error if any of these are missing from the input file.
-# ─────────────────────────────────────────────────────────────────────────────
-required_columns:
-  - line_number
-  - size
-  - design_temperature
-  - material
-  - scope
+# rules.yaml — JESA Stress Critical Line List engineering rules.
+#
+# This file holds ONLY the engineering spec: temperature/size thresholds, chart
+# tables, exception flags, strain-sensitive equipment taxonomy, and CN grouping
+# parameters. It is format-agnostic and applies to every project unchanged.
+#
+# Column names, scope filters, size units, and Excel layout are discovered at
+# runtime by format_detector.py (using patterns in mapping.yaml). Do NOT add
+# project-specific column names here.
+#
+# Engineers: edit this file to update the JESA spec. Do NOT edit the Python code.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # BOOLEAN FLAG PARSING
-# Cell values that are interpreted as True for all boolean flag columns.
+# Cell values interpreted as True for all boolean flag columns (case-insensitive).
 # ─────────────────────────────────────────────────────────────────────────────
 true_values:
   - "Yes"
-  - "yes"
+  - "Y"
   - "YES"
   - "TRUE"
-  - "true"
   - "True"
   - "1"
   - "X"
-  - "x"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 2 — EXCEPTION FLAGS (all force Level 1)
+# SIZE CONVERSION (mm → NPS inches)
+# Used when format_detector.py determines the size column is in mm.
+# ─────────────────────────────────────────────────────────────────────────────
+size_config:
+  mm_to_nps:
+    15:  0.5
+    20:  0.75
+    25:  1.0
+    32:  1.25
+    40:  1.5
+    50:  2.0
+    65:  2.5
+    80:  3.0
+    100: 4.0
+    125: 5.0
+    150: 6.0
+    200: 8.0
+    250: 10.0
+    300: 12.0
+    350: 14.0
+    400: 16.0
+    450: 18.0
+    500: 20.0
+    600: 24.0
+    700: 28.0
+    750: 30.0
+    800: 32.0
+    900: 36.0
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 2 — EXCEPTION FLAGS (any triggers → Level 1, per spec §3.2.5)
 # Evaluated in listed order; first triggered exception wins.
-# flag: internal column name from column_mappings
-# extra_condition: additional numeric check (null = no extra condition)
-#   supported operators: >, >=, <, <=  applied to the named field
+# If the 'flag' column is absent from the uploaded file, the rule is skipped.
 # ─────────────────────────────────────────────────────────────────────────────
 exception_flags:
   - name: relief_line_high_pressure
@@ -116,12 +93,12 @@ exception_flags:
   - name: vibration
     flag: vibration
     extra_condition: null
-    reason: "Line subjected to vibration (internal or external loads) → Level 1"
+    reason: "Line subjected to vibration or slug flow → Level 1"
 
   - name: settlement
     flag: settlement
     extra_condition: null
-    reason: "Line subjected to settlement → Level 1"
+    reason: "Line subjected to differential settlement → Level 1"
 
   - name: ped_category_3_large
     flag: ped_category_3
@@ -147,7 +124,7 @@ exception_flags:
   - name: nozzle_load_limit
     flag: nozzle_load_limit
     extra_condition: null
-    reason: "Line attached to equipment with published nozzle load limitations → Level 1"
+    reason: "Equipment with published nozzle load limitations → Level 1"
 
   - name: heavy_wall_large
     flag: heavy_wall
@@ -156,11 +133,6 @@ exception_flags:
       operator: ">="
       value: 2
     reason: "Heavy wall pipe (> standard weight), size >= 2\" → Level 1"
-
-  - name: differential_settlement
-    flag: differential_settlement
-    extra_condition: null
-    reason: "Line attached to equipment with differential settlement → Level 1"
 
   - name: cyclic_service
     flag: cyclic_service
@@ -184,184 +156,137 @@ exception_flags:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 3 — STRAIN-SENSITIVE EQUIPMENT
-# Tag prefixes used to identify strain-sensitive equipment from FROM/TO columns.
-# Matching is case-insensitive. A tag matches if it starts with the given prefix.
-# Multiple tags in one cell can be separated by "/" or "&" — all fragments checked.
+# Two detection methods — format_detector.py decides which one applies:
+#   "tag_prefix" — FROM/TO holds short tag codes like "P-101"
+#   "keyword"    — FROM/TO holds full names like "CONTRACTOR PUMP 02AP02"
+# Keyword patterns live in mapping.yaml (equipment_keywords.*).
 # ─────────────────────────────────────────────────────────────────────────────
 strain_sensitive_equipment:
   tag_patterns:
     - prefix: "P-"
-      type: "centrifugal_pump"
-      description: "Centrifugal pump"
+      type:   centrifugal_pump
     - prefix: "CP-"
-      type: "centrifugal_pump"
-      description: "Centrifugal pump (alternate prefix)"
+      type:   centrifugal_pump
     - prefix: "RP-"
-      type: "reciprocating_pump"
-      description: "Reciprocating pump"
+      type:   reciprocating_pump
     - prefix: "C-"
-      type: "compressor"
-      description: "Compressor"
+      type:   compressor
     - prefix: "K-"
-      type: "compressor"
-      description: "Compressor (alternate prefix)"
+      type:   compressor
+    - prefix: "KC-"
+      type:   compressor
     - prefix: "ST-"
-      type: "turbine"
-      description: "Steam turbine"
+      type:   turbine
     - prefix: "GT-"
-      type: "turbine"
-      description: "Gas turbine"
+      type:   turbine
+    - prefix: "T-"
+      type:   turbine
     - prefix: "H-"
-      type: "heater"
-      description: "Fired heater or boiler"
+      type:   heater
+    - prefix: "F-"
+      type:   heater
     - prefix: "B-"
-      type: "heater"
-      description: "Boiler"
+      type:   heater
     - prefix: "E-A"
-      type: "air_cooler"
-      description: "Air-cooled heat exchanger (fin-fan)"
+      type:   air_cooler
     - prefix: "AC-"
-      type: "air_cooler"
-      description: "Air cooler (alternate prefix)"
+      type:   air_cooler
     - prefix: "EC-"
-      type: "air_cooler"
-      description: "Air cooler (alternate prefix)"
+      type:   air_cooler
 
-  # Chart 3 classification rules for strain-sensitive equipment connections.
-  # Evaluated in listed order; first matching condition wins.
+  # Chart 3 classification matrix for strain-sensitive equipment connections.
+  # Evaluated in order; first matching condition wins.
   chart_3:
-    - condition_type: "equip_type"
-      equip_types: ["centrifugal_pump", "reciprocating_pump"]
-      reason: "Connected to centrifugal/reciprocating pump → always Level 1"
-      result: "Level 1"
+    - condition_type: equip_type
+      equip_types:    [centrifugal_pump, reciprocating_pump]
+      result:         "Level 1"
+      reason:         "Connected to centrifugal/reciprocating pump → always Level 1"
 
-    - condition_type: "temp_threshold"
-      temp_operator: ">="
-      temp_value: 100
-      reason: "Strain-sensitive equipment connection, temperature >= 100°C → Level 1"
-      result: "Level 1"
+    - condition_type: temp_threshold
+      temp_operator:  ">="
+      temp_value:     100
+      result:         "Level 1"
+      reason:         "Strain-sensitive equipment, temperature >= 100°C → Level 1"
 
-    - condition_type: "size_temp"
-      size_operator: "<="
-      size_value: 6
-      temp_operator: ">="
-      temp_value: 50
-      reason: "Strain-sensitive equipment connection, size <= 6\", temperature 50–99°C → Level 2"
-      result: "Level 2"
+    - condition_type: size_temp
+      size_operator:  "<="
+      size_value:     6
+      temp_operator:  ">="
+      temp_value:     50
+      result:         "Level 2"
+      reason:         "Strain-sensitive equipment, size <= 6\", temperature 50-99°C → Level 2"
 
-    - condition_type: "size_temp"
-      size_operator: ">"
-      size_value: 6
-      temp_operator: "<"
-      temp_value: 100
-      reason: "Strain-sensitive equipment connection, size > 6\", temperature < 100°C → Level 2"
-      result: "Level 2"
+    - condition_type: size_temp
+      size_operator:  ">"
+      size_value:     6
+      temp_operator:  "<"
+      temp_value:     100
+      result:         "Level 2"
+      reason:         "Strain-sensitive equipment, size > 6\", temperature < 100°C → Level 2"
 
-    - condition_type: "fallback"
-      reason: "Strain-sensitive equipment connection, size <= 6\", temperature < 50°C → Level 3"
-      result: "Level 3"
+    - condition_type: fallback
+      result:         "Level 3"
+      reason:         "Strain-sensitive equipment, size <= 6\", temperature < 50°C → Level 3"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 4 — MATERIAL CHARTS
 # Each chart is a list of size bands, evaluated top-to-bottom.
 # The first band where size <= max_size is used.
 # Within that band: Level 1 if temp > l1_threshold, Level 2 if temp > l2_threshold, else Level 3.
-# max_size of 9999 = catch-all for all larger sizes.
+# max_size: 9999 = catch-all for larger sizes.
 # ─────────────────────────────────────────────────────────────────────────────
 
 chart_1:
-  description: "Carbon Steel / Low-Alloy Steel — per QW2507-00-PE-SPC-00007 Chart 1"
+  description: "Carbon Steel / Low-Alloy Steel — QW2507-00-PE-SPC-00007 Chart 1"
   size_bands:
-    - max_size: 2
-      l1_threshold: 300
-      l2_threshold: 100
-    - max_size: 3
-      l1_threshold: 250
-      l2_threshold: 100
-    - max_size: 4
-      l1_threshold: 250
-      l2_threshold: 175
-    - max_size: 6
-      l1_threshold: 250
-      l2_threshold: 175
-    - max_size: 8
-      l1_threshold: 250
-      l2_threshold: 150
-    - max_size: 10
-      l1_threshold: 250
-      l2_threshold: 100
-    - max_size: 12
-      l1_threshold: 250
-      l2_threshold: 100
-    - max_size: 14
-      l1_threshold: 150
-      l2_threshold: 50
-    - max_size: 16
-      l1_threshold: 150
-      l2_threshold: 50
-    - max_size: 9999    # >= 18" catch-all
-      l1_threshold: 50
-      l2_threshold: 0
+    - {max_size: 2,    l1_threshold: 300, l2_threshold: 100}
+    - {max_size: 3,    l1_threshold: 250, l2_threshold: 100}
+    - {max_size: 4,    l1_threshold: 250, l2_threshold: 175}
+    - {max_size: 6,    l1_threshold: 250, l2_threshold: 175}
+    - {max_size: 8,    l1_threshold: 250, l2_threshold: 150}
+    - {max_size: 10,   l1_threshold: 250, l2_threshold: 100}
+    - {max_size: 12,   l1_threshold: 250, l2_threshold: 100}
+    - {max_size: 14,   l1_threshold: 150, l2_threshold: 50}
+    - {max_size: 16,   l1_threshold: 150, l2_threshold: 50}
+    - {max_size: 9999, l1_threshold: 50,  l2_threshold: 0}
 
 chart_2:
-  description: "Stainless Steel / Duplex / Other Alloy Metals — per QW2507-00-PE-SPC-00007 Chart 2"
+  description: "Stainless Steel / Duplex / Other Alloy Metals — Chart 2"
   size_bands:
-    - max_size: 2
-      l1_threshold: 250
-      l2_threshold: 100
-    - max_size: 3
-      l1_threshold: 250
-      l2_threshold: 175
-    - max_size: 4
-      l1_threshold: 200
-      l2_threshold: 100
-    - max_size: 6
-      l1_threshold: 200
-      l2_threshold: 100
-    - max_size: 12    # covers 8", 10", 12"
-      l1_threshold: 200
-      l2_threshold: 50
-    - max_size: 9999  # >= 14" catch-all
-      l1_threshold: 100
-      l2_threshold: 0
+    - {max_size: 2,    l1_threshold: 250, l2_threshold: 100}
+    - {max_size: 3,    l1_threshold: 250, l2_threshold: 175}
+    - {max_size: 4,    l1_threshold: 200, l2_threshold: 100}
+    - {max_size: 6,    l1_threshold: 200, l2_threshold: 100}
+    - {max_size: 12,   l1_threshold: 200, l2_threshold: 50}
+    - {max_size: 9999, l1_threshold: 100, l2_threshold: 0}
 
 chart_4:
-  description: "Non-strain-sensitive equipment connections — per QW2507-00-PE-SPC-00007 Chart 4"
+  description: "Non-strain-sensitive equipment connections — Chart 4"
   size_bands:
-    - max_size: 3     # covers 2" and 3"
-      l1_threshold: 300
-      l2_threshold: 175
-    - max_size: 6     # covers 4" and 6"
-      l1_threshold: 300
-      l2_threshold: 150
-    - max_size: 9999  # >= 8" catch-all
-      l1_threshold: 250
-      l2_threshold: 100
+    - {max_size: 3,    l1_threshold: 300, l2_threshold: 175}
+    - {max_size: 6,    l1_threshold: 300, l2_threshold: 150}
+    - {max_size: 9999, l1_threshold: 250, l2_threshold: 100}
 
-# Maps material group to default chart when no equipment override applies.
+# Maps material group → default chart when no equipment override applies.
+# FRP short-circuits at Step 1, so no chart needed.
 material_chart_map:
-  CS:  "chart_1"
-  SS:  "chart_2"
-  FRP: null     # handled at Step 1, never reaches Step 4
+  CS:  chart_1
+  SS:  chart_2
+  FRP: null
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CN ASSIGNMENT SETTINGS
-# Controls the CN (Calculation Number) grouping engine in cn_assigner.py.
-# Only Level 1 lines receive CN assignments.
+# Only Level 1 lines get CNs. Sequential numbering CN-001, CN-002…
+# CN-900+ is reserved for standalone / missing-data lines.
 # ─────────────────────────────────────────────────────────────────────────────
 cn_settings:
-  project_code: "QW2507"
-  max_lines_per_cn: 12
-  temp_delta_flag: 80
-  cn_number_format: "{project_code}-CN-{number:03d}"
-
-  # How to extract the area/unit code from the line number string.
-  # "characters_9_to_12_of_line_number" = 1-based, so Python slice [8:12].
-  # Set to null if you provide a dedicated area_code column instead.
-  area_code_extraction: "characters_9_to_12_of_line_number"
+  max_lines_per_cn:   15      # flag (not split) CNs larger than this
+  temp_delta_flag:    30      # split process consistency if delta T > this (°C)
+  cn_number_format:   "CN-{number:03d}"     # {project_code} optional if UI supplies one
 
   # Equipment type prefixes for tag recognition (case-insensitive).
-  # The tool checks each tag in FROM/TO against these prefixes in order.
+  # Used when FROM/TO contains short tag codes (e.g. P-101, RP-202A).
+  # Matches tag.upper().startswith(prefix).
   equipment_type_prefixes:
     centrifugal_pump:   ["P-", "CP-"]
     reciprocating_pump: ["RP-"]
@@ -371,22 +296,3 @@ cn_settings:
     vessel:             ["V-", "D-", "TK-", "VE-"]
     exchanger:          ["E-", "HE-", "X-"]
     heater:             ["H-", "F-"]
-
-  # CN number ranges — each type draws from its own counter range.
-  cn_number_ranges:
-    centrifugal_pump_start:   1
-    compressor_turbine_start: 100
-    equipment_system_start:   200
-    area_group_start:         300
-    unassigned_start:         900
-
-  # Column mapping for CN-specific columns.
-  # If area_code is null, the tool extracts area from line_number using area_code_extraction.
-  # If area_code names a column (after parser.py renaming), that column is read directly.
-  column_mapping:
-    line_number:        null   # uses internal 'line_number' column
-    from_equipment:     null   # uses internal 'from_equipment' column
-    to_equipment:       null   # uses internal 'to_equipment' column
-    design_temperature: null   # uses internal 'design_temperature' column
-    has_expansion_joint: null  # uses internal 'expansion_joint' column
-    area_code:          "area_code"   # dedicated Area Code column in test file

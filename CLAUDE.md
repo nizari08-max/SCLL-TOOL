@@ -1,83 +1,116 @@
 # CLAUDE.md — Behavioral Guide for Claude Code Sessions
 
 ## Project Identity
-**SCLL Tool** — Stress Critical Line List automated classifier for JESA piping stress engineers.
-This is a deterministic, rule-based Python CLI tool. No AI inference. No guessing. No assumptions.
+**SCLL Tool** — Stress Critical Line List automated classifier for piping stress engineers.
+Deterministic, rule-based, format-agnostic Python tool. No AI inference. No guessing.
+
+## Core Philosophy (format-agnostic, not file-specific)
+The tool understands the engineering LOGIC and applies it to ANY line list from ANY
+project/client. `format_detector.py` reads the workbook and produces a `detected_config`
+that drives the rest of the pipeline — no per-project rules files.
+
+If a column the engineering logic expects is missing from the input, the rule that
+depends on it is **skipped** and the affected rows get a `Data_Quality_Flag`. The tool
+NEVER rejects a file for "unknown format".
 
 ## Architecture — Which File Does What
 | File | Responsibility |
 |------|---------------|
-| `scll_tool.py` | CLI entry point — orchestration only, no domain logic |
-| `parser.py` | Reads Excel input, validates columns, filters scope, mm→NPS conversion — no classification |
-| `classifier.py` | 5-step classification engine — no file I/O, no Excel operations |
-| `output.py` | Writes color-coded Excel output — no classification logic |
-| `rules.yaml` | Generic rules template — column mappings, chart tables, thresholds |
-| `rules_q83010.yaml` | Project-specific rules for Q83010 (multi-row header, mm sizes, keyword detection) |
-| `material_mapping.yaml` | Pipe class code → material group — editable by engineers |
+| `scll_tool.py`          | CLI entry point — orchestration only |
+| `app.py`                | Flask web server — 3-step flow, SSE streaming |
+| `format_detector.py`    | Auto-detects header row, units row, column mappings, size unit, scope mode, equipment mode. Writes into `detected_config`. |
+| `parser.py`             | Reads Excel via `detected_config`, converts mm→NPS, filters scope. No classification. |
+| `classifier.py`         | 5-step classification waterfall. Emits `Level`, `Classification_Reason`, `Data_Quality_Flag`. |
+| `cn_assigner.py`        | CN grouping on Level 1 lines (6-rule spec). Emits `CN_Number`, `CN_Review_Flag`. |
+| `output.py`             | Opens engineer's original workbook and appends **5** new columns + SUMMARY + CN PROPOSALS sheets. |
+| `rules.yaml`            | Engineering data only: charts, thresholds, exception flags, CN settings. No column names, no project knowledge. |
+| `mapping.yaml`          | Column-name pattern matcher used by `format_detector.py`. Engineer-editable. |
+| `material_mapping.yaml` | Pipe-class code → material group (CS / SS / FRP). |
+| `templates/index.html`  | Single-page web UI (Upload&Detect → Progress → Results with inline download). |
 
 ## Non-Negotiable Rules
 
-### 1. Never hardcode numeric values in .py files
-All temperature thresholds, size limits, and pressure values must live in `rules.yaml`.
-Never write `if temp > 250` in Python. Always read from `rules["chart_1"]` etc.
+### 1. No hardcoded numeric values in `.py` files
+Temperature thresholds, size limits, pressure limits live in `rules.yaml`.
+Never write `if temp > 250` in Python — read from `rules["chart_1"]`.
 
-### 2. Never hardcode pipe class codes in .py files
+### 2. No hardcoded pipe-class codes in `.py` files
 All pipe class → material group mappings live in `material_mapping.yaml`.
 Never write `if material == "BA1"` in Python.
 
-### 3. Classification is a strict 5-step waterfall — never reorder
-Steps 1 → 2 → 3 → 4 → 5. Each step returns immediately if a level is assigned.
-A later step must NEVER override an earlier one.
+### 3. No hardcoded column names in `.py` files
+Column patterns live in `mapping.yaml`. `format_detector.py` matches them against the
+workbook; `parser.py` renames columns to internal field names. After parsing, all
+Python code uses the internal names (`size`, `design_temperature`, `material`, etc.).
 
-### 4. Never classify without a written reason
-Every classified row must have a non-empty `Classification_Reason` column.
-The reason must name which rule fired and which Step.
+### 4. No project-specific rules files
+The tool must work on ANY line list using `rules.yaml` + `mapping.yaml` only. If a
+project needs different patterns, update `mapping.yaml` (patterns list) — do NOT create
+`rules_<project>.yaml`.
 
-### 5. Missing data → NEEDS REVIEW, never assume
-If `size`, `design_temperature`, or `material` is blank:
-- Set `Review_Flag = "NEEDS REVIEW"`, `Level = ""`
-- Write a reason naming the missing field(s)
-- Do not attempt to guess, interpolate, or infer a value
+### 5. Classification is a strict 5-step waterfall — never reorder
+Step 1 → 2 → 3 → 4 → 5. Each step returns immediately once a level is assigned.
+Later steps must NEVER override an earlier one.
 
-### 6. Column names come from rules.yaml — never hardcoded in Python
-The Excel header for every field is defined in `rules.yaml['column_mappings']`.
-`parser.py` renames columns during load. After that, all Python code uses internal names.
+### 6. Every classified row must have a non-empty `Classification_Reason`
+The reason names which rule fired and which Step.
 
-### 7. Excluded rows are kept — not deleted
-Lines with Scope != JESA are greyed out in output Sheet 1 at the bottom.
-They appear in the excluded count on Sheet 2. Never drop them.
+### 7. Missing data → `Data_Quality_Flag`, never assume
+If a required field is blank:
+- Set `Data_Quality_Flag = "MISSING: <field_list>"` (or `"AMBIGUOUS: ..."`)
+- Leave `Level = ""`
+- Do not guess, interpolate, or infer a value
+- If a whole rule depends on a column that doesn't exist in the file, skip the rule
+  silently (don't flag every row — only flag rows where the specific cell is empty)
 
-## Testing Requirement
-After ANY change to `classifier.py`, `parser.py`, `rules.yaml`, or `material_mapping.yaml`, run both:
+### 8. Excluded rows are kept — not deleted
+Scope-excluded lines (vendor/client/licensor) stay in the output, greyed out, with
+`Data_Quality_Flag = "SCOPE: VENDOR"` (or CLIENT, LICENSOR, etc.). Never drop them.
 
-**Generic test suite (prefix detection mode):**
+## Output Philosophy — Enrich, Don't Replace
+The output Excel **IS the engineer's original file**, enriched. Five new columns are
+appended AFTER all original columns, preserving every original sheet and column:
+
+| # | Column                | Content                                                      |
+|---|-----------------------|--------------------------------------------------------------|
+| 1 | CRITICALITY LEVEL     | `I` / `II` / `III` (Roman), color-coded                      |
+| 2 | CLASSIFICATION REASON | Full text of which rule fired                                |
+| 3 | CN NUMBER             | `CN-001`, `CN-002`, … (Level I only)                         |
+| 4 | CN REVIEW FLAG        | `AUTO-CONFIRMED` / `REVIEW-LARGE-CN` / `REVIEW-STANDALONE`   |
+| 5 | DATA QUALITY FLAG     | `""` / `SCOPE: VENDOR` / `MISSING: <fields>` / `AMBIGUOUS: …` |
+
+SCOPE is **folded into DATA QUALITY FLAG** — there is no separate SCOPE column.
+
+Two new sheets are appended: **SUMMARY** and **CN PROPOSALS**.
+
+## CN Review Flags
+`AUTO-CONFIRMED` / `REVIEW-LARGE-CN` / `REVIEW-STANDALONE` — no square brackets.
+
+## Web App (3-step flow)
+Run: `python app.py` then open http://localhost:5000
+1. **UPLOAD & DETECT** — drop `.xlsx`, auto-detect format, show badges, confirm project code
+2. **ANALYSIS** — SSE-streamed progress log
+3. **RESULTS** — stats bar, classified lines table (filter/search/paginate), CN cards, inline download button
+
+No rules-file selector. No mode selector. No separate download step.
+
+## Testing
+After any change to `classifier.py`, `parser.py`, `cn_assigner.py`, `format_detector.py`,
+`rules.yaml`, `mapping.yaml`, or `material_mapping.yaml`:
+
 ```
-python scll_tool.py --input test_linelist.xlsx --output test_output.xlsx
+python scll_tool.py --input "Q37027-02-A00-PE-LST-00010 (1) (1).xlsx" --output /tmp/scll_out.xlsx
 ```
-Expected: Total=22, Excluded=2, L1=13, L2=3, L3=2, Review=2
-
-**Real project file (keyword detection mode):**
-```
-python scll_tool.py --input "Q83010-00-00-PR-LST-00003.xlsx" --output Q83010_scll_output.xlsx --rules rules_q83010.yaml
-```
-Expected: Total=179, Excluded=78, In-scope=101, L1=47, L2=38, L3=3, Review=13
+Expected (2026-04-20): Total=907, Excluded=0, L1=441, L2=105, L3=326, Missing=35, CNs=139
+(63 auto, 5 large, 71 standalone).
 
 If counts change unexpectedly, investigate before committing.
-
-## Project-Specific Rules Files
-Each project with a non-standard Excel layout gets its own `rules_<project>.yaml`.
-The generic `rules.yaml` is the template — never modify it for project-specific needs.
-
-Key settings that vary by project:
-- `excel_config` — sheet name, header row, skip rows (for multi-row headers)
-- `size_config.unit` — `"mm"` or `"inches"` (with `mm_to_nps` lookup if mm)
-- `scope.mode` — `"include_values"` (default) or `"text_keywords"`
-- `strain_sensitive_equipment.detection_mode` — `"prefix"` (default) or `"keyword"`
 
 ## What NOT To Do
 - No AI classification — logic must be 100% deterministic from rules.yaml
 - No silent decisions — every output must be traceable to a named rule
-- No assumptions on missing data — flag it
-- No schema changes to rules.yaml without updating CONTEXT.md and test_linelist.xlsx
-- No cleaning up / reformatting rules.yaml without explicit instruction from the user
+- No assumptions on missing data — flag it via `Data_Quality_Flag`
+- No project-specific rules files (`rules_<project>.yaml` is forbidden)
+- No reintroducing `output_jesa.py` or any second output path — `output.py` is the only writer
+- No reintroducing the SCOPE column — SCOPE is folded into DATA QUALITY FLAG
 - No creating additional helper files unless the user asks for them

@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SCLL Tool — Stress Critical Line List</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg0:#0F1923;--bg1:#0d1520;--bg2:#121d2b;--bg3:#162030;--bg4:#1a2740;
+  --border:#1e3050;--border-hi:#2a4878;
+  --text:#d4e1f5;--text2:#7a9cc4;--text3:#3a5878;
+  --accent:#0EA5E9;--accent-dim:rgba(14,165,233,.12);--accent-glow:rgba(14,165,233,.22);
+  --l1:#EF4444;--l1-bg:rgba(239,68,68,.08);--l1-border:rgba(239,68,68,.28);
+  --l2:#F59E0B;--l2-bg:rgba(245,158,11,.08);--l2-border:rgba(245,158,11,.28);
+  --l3:#22C55E;--l3-bg:rgba(34,197,94,.08);--l3-border:rgba(34,197,94,.28);
+  --rv:#EAB308;--rv-bg:rgba(234,179,8,.10);
+  --excl:#475569;--excl-bg:rgba(71,85,105,.10);
+  --font-body:'IBM Plex Sans',system-ui,sans-serif;
+  --font-mono:'IBM Plex Mono','Courier New',monospace;
+  --radius:4px;--shadow:0 4px 24px rgba(0,0,0,.5);
+}
+html,body{background:var(--bg0);color:var(--text);font-family:var(--font-body);font-size:13px;line-height:1.6;min-height:100vh}
+
+/* ── Topbar ── */
+#topbar{background:var(--bg1);border-bottom:1px solid var(--border);padding:0 24px;display:flex;align-items:center;gap:16px;height:50px;position:sticky;top:0;z-index:200}
+.tb-logo{font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--accent);letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
+.tb-sep{width:1px;height:20px;background:var(--border);flex-shrink:0}
+.tb-sub{font-size:11px;color:var(--text3);letter-spacing:.04em}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.status-dot{width:6px;height:6px;border-radius:50%;background:var(--text3);display:inline-block}
+.status-dot.live{background:var(--l3);box-shadow:0 0 6px var(--l3)}
+.status-lbl{font-size:11px;color:var(--text3);font-family:var(--font-mono)}
+
+/* ── Step indicator ── */
+#step-bar{background:var(--bg1);border-bottom:1px solid var(--border);padding:0 24px;display:flex;align-items:stretch;height:38px}
+.step{display:flex;align-items:center;gap:8px;padding:0 16px;font-size:11px;color:var(--text3);font-family:var(--font-mono);letter-spacing:.06em;border-bottom:2px solid transparent;cursor:default;white-space:nowrap;transition:color .2s,border-color .2s}
+.step.active{color:var(--accent);border-bottom-color:var(--accent)}
+.step.done{color:var(--l3);border-bottom-color:transparent}
+.step-num{width:18px;height:18px;border-radius:50%;background:var(--bg3);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0}
+.step.active .step-num{background:var(--accent);border-color:var(--accent);color:#fff}
+.step.done .step-num{background:var(--l3);border-color:var(--l3);color:#fff}
+
+/* ── Main layout ── */
+#main{max-width:1400px;margin:0 auto;padding:24px}
+
+/* ── Cards ── */
+.card{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:16px}
+.card-hdr{padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;background:var(--bg2)}
+.card-hdr h2{font-size:11px;font-family:var(--font-mono);letter-spacing:.08em;color:var(--text2);text-transform:uppercase;font-weight:600}
+.card-body{padding:20px}
+
+/* ── Upload zone ── */
+#drop-zone{border:2px dashed var(--border-hi);border-radius:var(--radius);padding:48px 24px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;background:var(--bg2)}
+#drop-zone:hover,#drop-zone.drag-over{border-color:var(--accent);background:var(--accent-dim)}
+#drop-zone .dz-icon{font-size:36px;margin-bottom:12px;opacity:.5}
+#drop-zone .dz-title{font-size:15px;font-weight:500;color:var(--text);margin-bottom:6px}
+#drop-zone .dz-sub{font-size:12px;color:var(--text2)}
+#file-input{display:none}
+
+/* ── File accepted state ── */
+#file-accepted{display:none;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px}
+.fa-row{display:flex;align-items:center;gap:12px}
+.fa-icon{width:36px;height:36px;background:var(--accent-dim);border-radius:var(--radius);display:flex;align-items:center;justify-content:center;color:var(--accent);font-size:18px;flex-shrink:0}
+.fa-name{font-family:var(--font-mono);font-size:12px;color:var(--accent);font-weight:500}
+.fa-meta{font-size:11px;color:var(--text2);margin-top:2px}
+
+/* ── Detection badges ── */
+#detection-panel{display:none;margin-top:16px}
+.det-title{font-size:11px;font-family:var(--font-mono);color:var(--text2);letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px}
+.badge-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:12px;font-size:11px;font-family:var(--font-mono);font-weight:500;white-space:nowrap}
+.badge.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);color:#22c55e}
+.badge.warning{background:rgba(234,179,8,.12);border:1px solid rgba(234,179,8,.3);color:#eab308}
+.badge.error{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:#ef4444}
+.det-not-found{font-size:11px;color:var(--rv);background:var(--rv-bg);border:1px solid rgba(234,179,8,.2);border-radius:var(--radius);padding:8px 12px;margin-bottom:12px}
+
+/* ── Form fields ── */
+.field-row{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:16px;max-width:320px}
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-size:11px;font-family:var(--font-mono);color:var(--text2);letter-spacing:.06em;text-transform:uppercase}
+.field input,.field select{background:var(--bg2);border:1px solid var(--border-hi);border-radius:var(--radius);color:var(--text);padding:7px 10px;font-family:var(--font-mono);font-size:12px;outline:none;transition:border-color .2s}
+.field input:focus,.field select:focus{border-color:var(--accent)}
+.field select option{background:var(--bg2)}
+
+/* ── Buttons ── */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:9px 18px;border:none;border-radius:var(--radius);font-size:12px;font-family:var(--font-mono);font-weight:600;cursor:pointer;transition:all .15s;letter-spacing:.06em;white-space:nowrap}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:#0284c7;box-shadow:0 0 16px var(--accent-glow)}
+.btn-primary:disabled{background:var(--bg4);color:var(--text3);cursor:not-allowed;box-shadow:none}
+.btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border-hi)}
+.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+.btn-lg{padding:12px 28px;font-size:13px;width:100%}
+.btn-dl{background:rgba(14,165,233,.12);border:1px solid rgba(14,165,233,.3);color:var(--accent)}
+.btn-dl:hover{background:var(--accent);color:#fff}
+
+/* ── Progress log ── */
+#progress-panel{display:none}
+#log-output{background:var(--bg0);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;font-family:var(--font-mono);font-size:12px;line-height:1.9;min-height:160px;max-height:300px;overflow-y:auto}
+.log-line{padding:1px 0;color:var(--text2)}
+.log-line.ok{color:var(--l3)}
+.log-line.err{color:var(--l1)}
+.log-line.spin{color:var(--accent)}
+
+/* ── Stats bar ── */
+#stats-bar{display:none;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;margin-bottom:16px}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:12px}
+.stat{text-align:center}
+.stat-val{font-size:24px;font-family:var(--font-mono);font-weight:600;line-height:1}
+.stat-lbl{font-size:10px;color:var(--text2);margin-top:4px;letter-spacing:.05em;text-transform:uppercase}
+.stat.l1 .stat-val{color:var(--l1)}
+.stat.l2 .stat-val{color:var(--l2)}
+.stat.l3 .stat-val{color:var(--l3)}
+.stat.rv .stat-val{color:var(--rv)}
+.stat.excl .stat-val{color:var(--excl)}
+.stat.cn .stat-val{color:var(--accent)}
+
+/* ── Results layout ── */
+#results-panel{display:none}
+.results-split{display:grid;grid-template-columns:60fr 40fr;gap:16px}
+@media(max-width:1100px){.results-split{grid-template-columns:1fr}}
+
+/* ── Filter tabs ── */
+.filter-row{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.filter-btn{padding:4px 12px;border-radius:12px;font-size:11px;font-family:var(--font-mono);cursor:pointer;border:1px solid var(--border-hi);background:var(--bg2);color:var(--text2);transition:all .15s}
+.filter-btn.active{color:#fff}
+.filter-btn[data-level="all"].active{background:var(--accent);border-color:var(--accent)}
+.filter-btn[data-level="level-1"].active{background:var(--l1);border-color:var(--l1)}
+.filter-btn[data-level="level-2"].active{background:var(--l2);border-color:var(--l2);color:#000}
+.filter-btn[data-level="level-3"].active{background:var(--l3);border-color:var(--l3);color:#000}
+.filter-btn[data-level="flagged"].active{background:var(--rv);border-color:var(--rv);color:#000}
+
+/* ── Classification table ── */
+#class-search{width:100%;background:var(--bg2);border:1px solid var(--border-hi);border-radius:var(--radius);color:var(--text);padding:7px 10px;font-family:var(--font-mono);font-size:12px;outline:none;margin-bottom:10px}
+#class-search:focus{border-color:var(--accent)}
+.tbl-wrap{overflow-x:auto;overflow-y:auto;max-height:480px}
+table.class-tbl{width:100%;border-collapse:collapse;font-size:12px}
+table.class-tbl th{position:sticky;top:0;background:var(--bg2);border-bottom:1px solid var(--border-hi);padding:7px 10px;text-align:left;font-family:var(--font-mono);font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--text2);white-space:nowrap;z-index:2}
+table.class-tbl td{padding:6px 10px;border-bottom:1px solid rgba(30,48,80,.4);vertical-align:middle;white-space:nowrap}
+table.class-tbl tr:hover td{background:rgba(14,165,233,.04)}
+.lvl-badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:3px;font-family:var(--font-mono);font-size:11px;font-weight:600;width:32px;justify-content:center}
+.lvl-badge.I{background:var(--l1-bg);color:var(--l1);border:1px solid var(--l1-border)}
+.lvl-badge.II{background:var(--l2-bg);color:var(--l2);border:1px solid var(--l2-border)}
+.lvl-badge.III{background:var(--l3-bg);color:var(--l3);border:1px solid var(--l3-border)}
+.lvl-badge.rv{background:var(--rv-bg);color:var(--rv)}
+.lvl-badge.excl{background:var(--excl-bg);color:var(--excl)}
+.reason-cell{max-width:200px;white-space:normal;font-size:11px;color:var(--text2);line-height:1.4}
+.cn-tag{font-family:var(--font-mono);font-size:10px;background:var(--accent-dim);color:var(--accent);padding:1px 6px;border-radius:3px;border:1px solid rgba(14,165,233,.2)}
+.flag-tag{font-size:10px;padding:1px 6px;border-radius:3px;font-family:var(--font-mono);white-space:nowrap}
+.flag-tag.missing{background:var(--rv-bg);color:var(--rv)}
+.flag-tag.ambiguous{background:rgba(239,68,68,.12);color:var(--l1)}
+
+/* ── Pagination ── */
+.page-row{display:flex;align-items:center;justify-content:space-between;margin-top:10px;font-size:11px;color:var(--text2)}
+.page-btns{display:flex;gap:6px}
+.page-btn{padding:3px 10px;border-radius:3px;border:1px solid var(--border-hi);background:var(--bg2);color:var(--text2);cursor:pointer;font-size:11px;font-family:var(--font-mono)}
+.page-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.page-btn:disabled{opacity:.35;cursor:default}
+
+/* ── CN cards ── */
+#cn-panel{overflow-y:auto;max-height:580px}
+.cn-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;overflow:hidden;transition:border-color .2s}
+.cn-card:hover{border-color:var(--border-hi)}
+.cn-card-hdr{padding:10px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+.cn-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.cn-num{font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--text);flex:1}
+.cn-count{font-size:10px;font-family:var(--font-mono);color:var(--text2);flex-shrink:0}
+.cn-flag{font-size:10px;font-family:var(--font-mono);padding:2px 7px;border-radius:10px;flex-shrink:0;white-space:nowrap}
+.cn-flag.auto{background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.3);color:var(--l3)}
+.cn-flag.rev{background:rgba(234,179,8,.12);border:1px solid rgba(234,179,8,.3);color:var(--rv)}
+.cn-flag.err{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:var(--l1)}
+.cn-chevron{color:var(--text3);font-size:12px;transition:transform .2s}
+.cn-card.expanded .cn-chevron{transform:rotate(90deg)}
+.cn-detail{display:none;padding:10px 14px 14px;border-top:1px solid var(--border);font-size:11px;color:var(--text2);line-height:1.7}
+.cn-card.expanded .cn-detail{display:block}
+.cn-lines{font-family:var(--font-mono);font-size:11px;color:var(--text);margin-bottom:6px;word-break:break-all;line-height:1.6}
+.cn-reason{font-size:11px;color:var(--text2);margin-bottom:10px}
+.cn-equip{font-size:10px;color:var(--text3);font-family:var(--font-mono);margin-bottom:10px;word-break:break-all}
+
+/* ── Spinners ── */
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin-ring{width:14px;height:14px;border:2px solid rgba(14,165,233,.2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
+@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+
+/* ── Misc utils ── */
+.hide{display:none!important}
+.mt8{margin-top:8px}
+.mt16{margin-top:16px}
+.text-muted{color:var(--text2);font-size:11px}
+.mono{font-family:var(--font-mono)}
+hr.divider{border:none;border-top:1px solid var(--border);margin:16px 0}
+</style>
+</head>
+<body>
+
+<!-- ── Topbar ── -->
+<div id="topbar">
+  <div class="tb-logo">SCLL Tool</div>
+  <div class="tb-sep"></div>
+  <div class="tb-sub">Stress Critical Line List — Format-Agnostic Classifier</div>
+  <div class="tb-right">
+    <div class="status-dot live" id="srv-dot"></div>
+    <div class="status-lbl" id="srv-lbl">READY</div>
+  </div>
+</div>
+
+<!-- ── Step bar ── -->
+<div id="step-bar">
+  <div class="step active" id="step1"><div class="step-num">1</div>UPLOAD &amp; DETECT</div>
+  <div class="step" id="step2"><div class="step-num">2</div>ANALYSIS</div>
+  <div class="step" id="step3"><div class="step-num">3</div>RESULTS</div>
+</div>
+
+<div id="main">
+
+<!-- ════════════════════════════════════════════════════
+     STEP 1 — UPLOAD
+════════════════════════════════════════════════════ -->
+<div id="panel-upload">
+  <div class="card">
+    <div class="card-hdr"><h2>Upload Line List</h2></div>
+    <div class="card-body">
+
+      <!-- Drop zone -->
+      <div id="drop-zone" onclick="document.getElementById('file-input').click()">
+        <div class="dz-icon">📂</div>
+        <div class="dz-title">Drop your line list Excel file here</div>
+        <div class="dz-sub">Accepts .xlsx from any project — any column layout, any header row</div>
+      </div>
+      <input type="file" id="file-input" accept=".xlsx" onchange="handleFileSelect(this.files[0])">
+
+      <!-- File accepted card -->
+      <div id="file-accepted">
+        <div class="fa-row">
+          <div class="fa-icon">📊</div>
+          <div>
+            <div class="fa-name" id="fa-name"></div>
+            <div class="fa-meta" id="fa-meta"></div>
+          </div>
+          <button class="btn btn-ghost" style="margin-left:auto;padding:5px 12px;font-size:11px" onclick="resetUpload()">✕ Change</button>
+        </div>
+      </div>
+
+      <!-- Detection panel -->
+      <div id="detection-panel">
+        <div class="det-title">Format Detection</div>
+        <div id="det-loading" style="display:flex;align-items:center;gap:10px;padding:8px 0;color:var(--accent);font-size:12px;font-family:var(--font-mono)">
+          <div class="spin-ring"></div> Analysing file structure...
+        </div>
+        <div id="det-result" style="display:none">
+          <div class="badge-row" id="badge-row"></div>
+          <div id="not-found-warn" class="det-not-found hide"></div>
+          <details style="margin-bottom:14px">
+            <summary style="cursor:pointer;font-size:11px;color:var(--text2);font-family:var(--font-mono);letter-spacing:.05em;user-select:none">▶ Full detection log</summary>
+            <pre id="det-log" style="margin-top:8px;font-size:11px;color:var(--text2);line-height:1.8;white-space:pre-wrap;background:var(--bg0);padding:10px 14px;border-radius:var(--radius);border:1px solid var(--border)"></pre>
+          </details>
+
+          <hr class="divider">
+          <div class="field-row">
+            <div class="field">
+              <label>Project Code (optional)</label>
+              <input type="text" id="project-code" placeholder="e.g. Q37027" maxlength="20">
+            </div>
+          </div>
+
+          <button class="btn btn-primary btn-lg" id="run-btn" onclick="runAnalysis()" disabled>
+            <span id="run-btn-icon">▶</span> RUN ANALYSIS
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════
+     STEP 2 — PROGRESS
+════════════════════════════════════════════════════ -->
+<div id="panel-progress" class="hide">
+  <div class="card">
+    <div class="card-hdr">
+      <div class="spin-ring" id="progress-spin"></div>
+      <h2 id="progress-title">RUNNING ANALYSIS</h2>
+    </div>
+    <div class="card-body">
+      <div id="log-output"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════
+     STEP 3 — RESULTS
+════════════════════════════════════════════════════ -->
+<div id="panel-results" class="hide">
+
+  <!-- Stats bar -->
+  <div id="stats-bar" style="display:block">
+    <div class="stats-grid">
+      <div class="stat"><div class="stat-val" id="s-total">—</div><div class="stat-lbl">Total Lines</div></div>
+      <div class="stat excl"><div class="stat-val" id="s-excl">—</div><div class="stat-lbl">Excluded</div></div>
+      <div class="stat l1"><div class="stat-val" id="s-l1">—</div><div class="stat-lbl">Level I</div></div>
+      <div class="stat l2"><div class="stat-val" id="s-l2">—</div><div class="stat-lbl">Level II</div></div>
+      <div class="stat l3"><div class="stat-val" id="s-l3">—</div><div class="stat-lbl">Level III</div></div>
+      <div class="stat rv"><div class="stat-val" id="s-missing">—</div><div class="stat-lbl">Missing Data</div></div>
+      <div class="stat cn"><div class="stat-val" id="s-cn">—</div><div class="stat-lbl">CNs Proposed</div></div>
+    </div>
+  </div>
+
+  <div class="results-split">
+
+    <!-- Left: classification table -->
+    <div>
+      <div class="card">
+        <div class="card-hdr"><h2>Classified Lines</h2></div>
+        <div class="card-body" style="padding:14px">
+          <input id="class-search" type="text" placeholder="Search by line number, material, equipment..." oninput="filterTable()" autocomplete="off">
+          <div class="filter-row">
+            <button class="filter-btn active" data-level="all" onclick="setFilter('all',this)">All</button>
+            <button class="filter-btn" data-level="level-1" onclick="setFilter('level-1',this)">Level I</button>
+            <button class="filter-btn" data-level="level-2" onclick="setFilter('level-2',this)">Level II</button>
+            <button class="filter-btn" data-level="level-3" onclick="setFilter('level-3',this)">Level III</button>
+            <button class="filter-btn" data-level="flagged" onclick="setFilter('flagged',this)">⚠ Flagged</button>
+          </div>
+          <div class="tbl-wrap">
+            <table class="class-tbl">
+              <thead>
+                <tr>
+                  <th>Line No.</th>
+                  <th>Size</th>
+                  <th>Material</th>
+                  <th>Temp °C</th>
+                  <th>Level</th>
+                  <th>Reason</th>
+                  <th>CN</th>
+                  <th>Flag</th>
+                </tr>
+              </thead>
+              <tbody id="class-tbody"></tbody>
+            </table>
+          </div>
+          <div class="page-row">
+            <span id="page-info" class="text-muted">—</span>
+            <div class="page-btns">
+              <button class="page-btn" id="page-prev" onclick="changePage(-1)" disabled>‹ Prev</button>
+              <button class="page-btn" id="page-next" onclick="changePage(1)" disabled>Next ›</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: CN cards -->
+    <div>
+      <div class="card">
+        <div class="card-hdr">
+          <h2>CN Proposals</h2>
+          <span id="cn-breakdown" class="text-muted" style="margin-left:auto;font-family:var(--font-mono)"></span>
+        </div>
+        <div class="card-body" style="padding:14px">
+          <div id="cn-panel"></div>
+          <div id="cn-empty" class="text-muted" style="padding:16px 0;text-align:center">No CN proposals generated</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end;align-items:center">
+    <span id="result-filename" class="text-muted mono"></span>
+    <button class="btn btn-ghost" onclick="resetUpload()">↺ Upload New File</button>
+    <button class="btn btn-dl" onclick="downloadMain()">⬇ Download Enriched Excel</button>
+  </div>
+</div>
+
+</div><!-- /#main -->
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let state = {
+  filename: null,
+  detectedConfig: null,
+  jobId: null,
+  result: null,
+  activeFilter: 'all',
+  searchTerm: '',
+  page: 0,
+  pageSize: 50,
+  filteredRows: [],
+};
+
+// ── Steps ────────────────────────────────────────────────────────────────────
+function setStep(n) {
+  ['step1','step2','step3'].forEach((id, i) => {
+    const el = document.getElementById(id);
+    el.classList.remove('active','done');
+    if (i + 1 === n) el.classList.add('active');
+    else if (i + 1 < n) el.classList.add('done');
+  });
+  ['panel-upload','panel-progress','panel-results'].forEach((id, i) => {
+    document.getElementById(id).classList.toggle('hide', i + 1 !== n);
+  });
+}
+
+// ── File handling ────────────────────────────────────────────────────────────
+const dropZone = document.getElementById('drop-zone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag-over'); const f = e.dataTransfer.files[0]; if (f) handleFileSelect(f); });
+
+function handleFileSelect(file) {
+  if (!file || !file.name.toLowerCase().endsWith('.xlsx')) {
+    alert('Please upload an .xlsx file.'); return;
+  }
+  uploadFile(file);
+}
+
+function uploadFile(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+
+  document.getElementById('drop-zone').style.display = 'none';
+  document.getElementById('file-accepted').style.display = 'block';
+  document.getElementById('fa-name').textContent = file.name;
+  document.getElementById('fa-meta').textContent = `${(file.size / 1024).toFixed(0)} KB — detecting format...`;
+  document.getElementById('detection-panel').style.display = 'block';
+  document.getElementById('det-loading').style.display = 'flex';
+  document.getElementById('det-result').style.display = 'none';
+
+  fetch('/upload', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { showError(data.error); return; }
+      state.filename = data.filename;
+      state.detectedConfig = data.detected_config || {};
+      showDetection(data);
+    })
+    .catch(err => showError(String(err)));
+}
+
+function showDetection(data) {
+  document.getElementById('det-loading').style.display = 'none';
+  document.getElementById('det-result').style.display = 'block';
+
+  document.getElementById('fa-meta').textContent =
+    `${data.row_count} data rows · sheets: ${(data.sheet_names || []).join(', ')}`;
+
+  const badgeRow = document.getElementById('badge-row');
+  badgeRow.innerHTML = '';
+  (data.detection_badges || []).forEach(b => {
+    const span = document.createElement('span');
+    span.className = `badge ${b.type}`;
+    span.title = b.title || '';
+    span.textContent = `${b.icon} ${b.label}`;
+    badgeRow.appendChild(span);
+  });
+
+  const nfw = document.getElementById('not-found-warn');
+  const nf = data.not_found_columns || [];
+  if (nf.length > 0) {
+    nfw.textContent = `⚠ ${nf.length} column${nf.length === 1 ? '' : 's'} not found — rules relying on them will be skipped: ${nf.join(', ')}`;
+    nfw.classList.remove('hide');
+  } else {
+    nfw.classList.add('hide');
+  }
+
+  document.getElementById('det-log').textContent = data.detection_summary || '';
+
+  if (data.project_code) {
+    document.getElementById('project-code').value = data.project_code;
+  }
+
+  document.getElementById('run-btn').disabled = false;
+}
+
+function resetUpload() {
+  state = { filename:null, detectedConfig:null, jobId:null, result:null,
+            activeFilter:'all', searchTerm:'', page:0, pageSize:50, filteredRows:[] };
+  document.getElementById('drop-zone').style.display = 'block';
+  document.getElementById('file-accepted').style.display = 'none';
+  document.getElementById('detection-panel').style.display = 'none';
+  document.getElementById('file-input').value = '';
+  setStep(1);
+}
+
+// ── Run analysis ─────────────────────────────────────────────────────────────
+function runAnalysis() {
+  if (!state.filename) return;
+
+  const projectCode = document.getElementById('project-code').value.trim();
+
+  document.getElementById('log-output').innerHTML = '';
+  setStep(2);
+  document.getElementById('progress-title').textContent = 'RUNNING ANALYSIS';
+  document.getElementById('progress-spin').style.display = 'block';
+
+  fetch('/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      filename:        state.filename,
+      project_code:    projectCode,
+      detected_config: state.detectedConfig,
+    }),
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) { showError(data.error); setStep(1); return; }
+    state.jobId = data.job_id;
+    streamProgress(data.job_id);
+  })
+  .catch(err => { showError(String(err)); setStep(1); });
+}
+
+function streamProgress(jobId) {
+  const logEl = document.getElementById('log-output');
+  const es = new EventSource(`/job-status/${jobId}`);
+
+  es.onmessage = function(ev) {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'log') {
+      const div = document.createElement('div');
+      div.className = 'log-line' +
+        (msg.message.startsWith('✓') ? ' ok' :
+         msg.message.startsWith('✗') ? ' err' :
+         msg.message.startsWith('⟳') ? ' spin' : '');
+      div.textContent = msg.message;
+      logEl.appendChild(div);
+      logEl.scrollTop = logEl.scrollHeight;
+    } else if (msg.type === 'done') {
+      es.close();
+      document.getElementById('progress-spin').style.display = 'none';
+      document.getElementById('progress-title').textContent = 'ANALYSIS COMPLETE';
+      loadResults(jobId);
+    } else if (msg.type === 'error') {
+      es.close();
+      const div = document.createElement('div');
+      div.className = 'log-line err';
+      div.textContent = `✗ ${msg.message}`;
+      logEl.appendChild(div);
+      document.getElementById('progress-spin').style.display = 'none';
+      document.getElementById('progress-title').textContent = 'ERROR';
+    }
+  };
+  es.onerror = function() {
+    es.close();
+    const div = document.createElement('div');
+    div.className = 'log-line err';
+    div.textContent = '✗ Connection error — check server logs';
+    logEl.appendChild(div);
+  };
+}
+
+function loadResults(jobId) {
+  fetch(`/results/${jobId}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { showError(data.error); return; }
+      state.result = data;
+      renderResults(data);
+      setStep(3);
+    })
+    .catch(err => showError(String(err)));
+}
+
+// ── Render results ───────────────────────────────────────────────────────────
+function renderResults(data) {
+  const s = data.stats || {};
+
+  document.getElementById('s-total').textContent   = s.total ?? '—';
+  document.getElementById('s-excl').textContent    = s.excluded ?? '—';
+  document.getElementById('s-l1').textContent      = s.level1 ?? '—';
+  document.getElementById('s-l2').textContent      = s.level2 ?? '—';
+  document.getElementById('s-l3').textContent      = s.level3 ?? '—';
+  document.getElementById('s-missing').textContent = s.missing ?? '—';
+  document.getElementById('s-cn').textContent      = s.cn_count ?? '—';
+
+  // CN breakdown next to the CN card header
+  const cnParts = [];
+  if (s.cn_auto)       cnParts.push(`<span style="color:var(--l3)">${s.cn_auto} auto</span>`);
+  if (s.cn_large)      cnParts.push(`<span style="color:var(--rv)">${s.cn_large} large</span>`);
+  if (s.cn_standalone) cnParts.push(`<span style="color:var(--l1)">${s.cn_standalone} standalone</span>`);
+  document.getElementById('cn-breakdown').innerHTML = cnParts.join(' · ');
+
+  document.getElementById('result-filename').textContent = data.output_filename || '';
+
+  state.filteredRows = data.classifications || [];
+  renderTable();
+
+  renderCNCards(data.cns || []);
+}
+
+function isMissing(dq)   { return typeof dq === 'string' && dq.toUpperCase().startsWith('MISSING'); }
+function isAmbiguous(dq) { return typeof dq === 'string' && dq.toUpperCase().startsWith('AMBIGUOUS'); }
+function isFlagged(dq)   { return isMissing(dq) || isAmbiguous(dq); }
+
+function levelBadge(level, dq) {
+  if (isFlagged(dq)) return '<span class="lvl-badge rv">?</span>';
+  const roman = level === 'Level 1' ? 'I' : level === 'Level 2' ? 'II' : level === 'Level 3' ? 'III' : '';
+  if (!roman) return '<span class="lvl-badge excl">—</span>';
+  return `<span class="lvl-badge ${roman}">${roman}</span>`;
+}
+
+function flagCell(dq) {
+  if (isMissing(dq))   return `<span class="flag-tag missing" title="${esc(dq)}">⚠ MISSING</span>`;
+  if (isAmbiguous(dq)) return `<span class="flag-tag ambiguous" title="${esc(dq)}">⚠ AMBIGUOUS</span>`;
+  return '';
+}
+
+function setFilter(f, btn) {
+  state.activeFilter = f;
+  state.page = 0;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderTable();
+}
+
+function filterTable() {
+  state.searchTerm = document.getElementById('class-search').value.toLowerCase();
+  state.page = 0;
+  renderTable();
+}
+
+function renderTable() {
+  if (!state.result) return;
+  const rows = state.result.classifications || [];
+  const f = state.activeFilter;
+  const q = state.searchTerm;
+
+  let filtered = rows.filter(r => {
+    if (f === 'level-1' && r.level !== 'Level 1') return false;
+    if (f === 'level-2' && r.level !== 'Level 2') return false;
+    if (f === 'level-3' && r.level !== 'Level 3') return false;
+    if (f === 'flagged' && !isFlagged(r.data_quality)) return false;
+    if (q) {
+      const hay = [r.line_number, r.material, r.from_equipment, r.to_equipment,
+                   r.cn_number, r.fluid_service, r.reason].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  state.filteredRows = filtered;
+  const start = state.page * state.pageSize;
+  const page  = filtered.slice(start, start + state.pageSize);
+
+  const tbody = document.getElementById('class-tbody');
+  tbody.innerHTML = '';
+  page.forEach(r => {
+    const tr = document.createElement('tr');
+    const cn = r.cn_number ? `<span class="cn-tag">${esc(r.cn_number)}</span>` : '';
+    tr.innerHTML = `
+      <td class="mono" style="font-size:11px;color:var(--text)">${esc(r.line_number)}</td>
+      <td class="mono" style="font-size:11px">${esc(r.size)}</td>
+      <td class="mono" style="font-size:11px">${esc(r.material)}</td>
+      <td class="mono" style="font-size:11px">${esc(r.design_temperature)}</td>
+      <td>${levelBadge(r.level, r.data_quality)}</td>
+      <td class="reason-cell">${esc(r.reason)}</td>
+      <td>${cn}</td>
+      <td>${flagCell(r.data_quality)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / state.pageSize));
+  document.getElementById('page-info').textContent = total === 0
+    ? 'No matching rows'
+    : `${start + 1}–${Math.min(start + state.pageSize, total)} of ${total}`;
+  document.getElementById('page-prev').disabled = state.page === 0;
+  document.getElementById('page-next').disabled = state.page >= totalPages - 1;
+}
+
+function changePage(delta) {
+  state.page += delta;
+  if (state.page < 0) state.page = 0;
+  renderTable();
+}
+
+function cnFlagClass(flag) {
+  if (flag === 'AUTO-CONFIRMED')    return 'auto';
+  if (flag === 'REVIEW-LARGE-CN')   return 'rev';
+  if (flag === 'REVIEW-STANDALONE') return 'err';
+  return 'rev';
+}
+
+function renderCNCards(cns) {
+  const panel = document.getElementById('cn-panel');
+  const empty = document.getElementById('cn-empty');
+  panel.innerHTML = '';
+
+  if (!cns || cns.length === 0) {
+    empty.style.display = 'block'; return;
+  }
+  empty.style.display = 'none';
+
+  cns.forEach((cn, idx) => {
+    const flagClass = cnFlagClass(cn.review_flag);
+    const equip = (cn.equipment_tags || []).filter(Boolean).join(', ');
+    const lines = (cn.line_numbers || []).join(', ');
+
+    const card = document.createElement('div');
+    card.className = 'cn-card';
+    card.id = `cn-card-${idx}`;
+    card.innerHTML = `
+      <div class="cn-card-hdr" onclick="toggleCN(${idx})">
+        <div class="cn-dot" style="background:${cn.color}"></div>
+        <div class="cn-num">${esc(cn.cn_number)}</div>
+        <div class="cn-count">${cn.line_count} line${cn.line_count !== 1 ? 's' : ''}</div>
+        ${cn.temp_range && cn.temp_range !== '—' ? `<div style="font-size:10px;font-family:var(--font-mono);color:var(--text2)">${esc(cn.temp_range)}</div>` : ''}
+        <div class="cn-flag ${flagClass}">${esc(cn.review_flag)}</div>
+        <div class="cn-chevron">›</div>
+      </div>
+      <div class="cn-detail">
+        <div class="cn-lines">${esc(lines)}</div>
+        ${equip ? `<div class="cn-equip">Equipment: ${esc(equip)}</div>` : ''}
+        <div class="cn-reason">${esc(cn.grouping_reason)}</div>
+      </div>
+    `;
+    panel.appendChild(card);
+  });
+}
+
+function toggleCN(idx) {
+  const card = document.getElementById(`cn-card-${idx}`);
+  card.classList.toggle('expanded');
+}
+
+// ── Download ─────────────────────────────────────────────────────────────────
+function downloadMain() {
+  if (!state.result || !state.result.output_filename) return;
+  window.location.href = `/download/${state.result.output_filename}`;
+}
+
+function showError(msg) {
+  alert(`Error: ${msg}`);
+}
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,277 @@
+# mapping.yaml — Column name patterns for auto-detection.
+#
+# Used by format_detector.py to map any Excel file's columns to the internal
+# field names the classifier expects. Engineers can edit this file to add
+# patterns when a project uses unusual column headers — no Python changes needed.
+#
+# Matching rules:
+#   - Case-insensitive
+#   - Exact match scores highest, then startswith, then substring (min 4 chars)
+#   - Patterns listed most-specific → least-specific so "MAX LINE SIZE" wins over "SIZE"
+#   - Each Excel column is assigned to at most ONE internal field (greedy, highest score)
+
+columns:
+
+  # ── CRITICAL engineering parameters ─────────────────────────────────────────
+  line_number:
+    - "new line no"
+    - "line number"
+    - "line no."
+    - "line no"
+    - "line tag"
+    - "line id"
+    - "tag number"
+    - "tag no"
+    - "pipe number"
+    - "pipe no"
+    - "line ref"
+
+  size:
+    - "max line size"
+    - "max. line size"
+    - "line size"
+    - "size (inch"
+    - "size (mm"
+    - "nominal size"
+    - "nominal pipe size"
+    - "nps"
+    - "nominal"
+    - "dn ("
+    - "diameter"
+    - "size"
+
+  design_temperature:
+    - "design temperature - max"
+    - "design temp - max"
+    - "design temperature max"
+    - "design temperature"
+    - "design temp"
+    - "temperature - max"
+    - "temperature max"
+    - "max temperature"
+    - "max. temperature"
+    - "max temp"
+    - "t max"
+    - "t-max"
+    - "temp max"
+    - "temperature"
+
+  material:
+    - "piping material class"
+    - "piping class"
+    - "pipe class"
+    - "pipe spec"
+    - "material of construction"
+    - "moc"
+    - "material"
+
+  from_equipment:
+    - "from equipment"
+    - "from"
+    - "source"
+    - "origin"
+
+  to_equipment:
+    - "to equipment"
+    - "destination"
+    - "dest."
+    - "dest"
+    - "to"
+
+  # ── USEFUL fields (skip rules if not found) ─────────────────────────────────
+  inlet_pressure:
+    - "design pressure - internal"
+    - "design pressure"
+    - "inlet pressure"
+    - "design press internal"
+    - "design press"
+    - "pressure max"
+
+  fluid_service:
+    - "fluid service code"
+    - "fluid service"
+    - "service description"
+    - "fluid/service"
+    - "service code"
+    - "fluid code"
+    - "service"
+
+  scope:
+    - "stress scope"
+    - "scope"
+
+  area:
+    - "area no"
+    - "area code"
+    - "area"
+
+  unit:
+    - "unit no."
+    - "unit no"
+    - "unit"
+
+  train:
+    - "train no"
+    - "train"
+
+  pid_reference:
+    - "p&id no"
+    - "p&id ref"
+    - "p&id"
+    - "pid no"
+    - "pid ref"
+    - "drawing no"
+    - "drawing ref"
+
+  notes_remarks:
+    - "notes/remarks"
+    - "remarks/notes"
+    - "remarks"
+    - "notes"
+    - "comments"
+    - "observations"
+
+  stress_criticality:
+    - "stress criticality"
+    - "analysis level"
+    - "criticality level"
+    - "stress level"
+
+  calculation_number:
+    - "calculation number"
+    - "calc. number"
+    - "calc number"
+
+  # ── BOOLEAN flag columns (all optional — default False if absent) ───────────
+  relief_line:
+    - "blowdown or relief"
+    - "relief line"
+    - "blowdown"
+    - "relief"
+
+  vibration:
+    - "slug flow"
+    - "vibration service"
+    - "vibration"
+
+  expansion_joint:
+    - "expansion joint"
+    - "flex connector"
+    - "flexible connector"
+
+  vacuum:
+    - "vacuum service"
+    - "vacuum"
+
+  settlement:
+    - "differential settlement"
+    - "settlement"
+
+  jacketed:
+    - "jacketed pipe"
+    - "jacketed"
+
+  cement_lined:
+    - "cement lined"
+    - "cement-lined"
+    - "glass lined"
+    - "glass-lined"
+    - "refractory lined"
+    - "refractory"
+
+  vertical_tower:
+    - "vertical tower"
+    - "tower connection"
+
+  ped_category_3:
+    - "ped category"
+    - "ped cat"
+
+  nozzle_load_limit:
+    - "nozzle load limit"
+    - "nozzle load"
+
+  heavy_wall:
+    - "heavy wall"
+
+  cyclic_service:
+    - "cyclic service"
+    - "cyclic"
+
+  category_m:
+    - "category m"
+    - "cat m"
+
+  client_request:
+    - "client request"
+
+  underground:
+    - "underground service"
+    - "underground"
+
+  schedule_160:
+    - "schedule 160"
+    - "sch 160"
+    - "sch. 160"
+
+# ── Scope value dictionaries ──────────────────────────────────────────────────
+# Values that indicate a line is IN scope vs EXCLUDED, used when a scope column
+# is detected. Matching is case-insensitive against stripped cell values.
+scope_values:
+  include:
+    - "jesa"
+    - "stress"
+    - "piping stress"
+    - "epc"
+    - "contractor"
+    - "in scope"
+  exclude:
+    - "vendor"
+    - "client"
+    - "licensor"
+    - "owner"
+    - "not in piping scope"
+    - "not in scope"
+    - "out of scope"
+
+# Keywords searched in free-text NOTES/REMARKS cells when no dedicated scope column exists
+scope_text_keywords:
+  - "vendor"
+  - "client"
+  - "licensor"
+
+# ── Equipment classification keywords ─────────────────────────────────────────
+# Used when FROM/TO columns contain descriptive names rather than short tag codes.
+# Patterns evaluated in order (first match wins). Place more-specific before generic.
+equipment_keywords:
+  strain_sensitive:
+    - type: reciprocating_pump
+      keywords: ["RECIPROCATING PUMP", "RECIPROCATING COMPRESSOR"]
+    - type: centrifugal_pump
+      keywords: ["CENTRIFUGAL PUMP", "PUMP"]
+    - type: compressor
+      keywords: ["COMPRESSOR", "BLOWER"]
+    - type: turbine
+      keywords: ["TURBINE"]
+    - type: heater
+      keywords: ["FIRED HEATER", "HEATER", "FURNACE", "BOILER"]
+    - type: air_cooler
+      keywords: ["AIR COOLER", "FIN FAN", "FIN-FAN", "AIR-COOLED"]
+
+  non_strain_sensitive:
+    - "TANK"
+    - "VESSEL"
+    - "DRUM"
+    - "TOWER"
+    - "COLUMN"
+    - "REACTOR"
+    - "SEPARATOR"
+    - "ABSORBER"
+    - "EXCHANGER"
+    - "REBOILER"
+    - "CONDENSER"
+    - "FILTER"
+    - "KNOCK-OUT"
+    - "KO DRUM"
+    - "HEADER"
+    - "MANIFOLD"

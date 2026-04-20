@@ -1,15 +1,26 @@
 """
-output.py — Colored Excel writer for SCLL classified output.
+output.py — Enriched Excel writer.
 
-Produces:
-  Sheet 1 "Classified Lines": full line list with Level, Reason, Review_Flag,
-    CN columns for Level 1 rows, color-coded by row status.
-  Sheet 2 "Summary": count breakdown by level/status.
-  Sheet 3 "CN Proposals": one row per proposed CN with full grouping detail.
-  Sheet 4 "Dashboard": CN summary statistics.
+Philosophy: the output is the engineer's ORIGINAL workbook, enriched.
+We open the original file, preserve every sheet and every cell, then append
+FIVE new columns to the right of the line list sheet and add TWO summary
+sheets at the end:
 
-No classification logic here. Receives already-classified DataFrames.
+    CRITICALITY LEVEL     I / II / III (Roman numerals, colour-coded)
+    CLASSIFICATION REASON full text of which rule fired
+    CN NUMBER             CN-001… for Level I lines only
+    CN REVIEW FLAG        AUTO-CONFIRMED / REVIEW-LARGE-CN / REVIEW-STANDALONE
+    DATA QUALITY FLAG     SCOPE: VENDOR | SCOPE: CLIENT | MISSING: … | AMBIGUOUS | blank
+
+Additional sheets appended:
+    SUMMARY               classification + CN counts
+    CN PROPOSALS          one row per proposed CN with full grouping detail
 """
+
+from __future__ import annotations
+
+from copy import copy
+from typing import Optional
 
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
@@ -18,386 +29,72 @@ import pandas as pd
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Color palette (ARGB format for openpyxl)
+# Palette
 # ─────────────────────────────────────────────────────────────────────────────
+
 COLORS = {
-    "Level 1":     "FFFF9999",   # light red
-    "Level 2":     "FFFFC266",   # light orange
-    "Level 3":     "FF92D050",   # light green
-    "EXCLUDED":    "FFD3D3D3",   # light grey
-    "NEEDS REVIEW": "FFFFFF99",  # light yellow
-    "HEADER":      "FF1F4E79",   # dark blue header
-    "SUMMARY_HDR": "FF2E75B6",   # medium blue
+    "LEVEL_I":   "FFFF9999",   # light red
+    "LEVEL_II":  "FFFFC266",   # light orange
+    "LEVEL_III": "FF92D050",   # light green
+    "EXCLUDED":  "FFD9D9D9",   # grey
+    "REVIEW":    "FFFFFF99",   # yellow
+    "HEADER":    "FF1F4E79",   # dark navy
+    "SUMMARY_HDR": "FF2E75B6", # medium blue
+    "FLAG_GOOD": "FF92D050",
+    "FLAG_WARN": "FFFFC266",
+    "FLAG_BAD":  "FFFF9999",
 }
 
 FONT_WHITE = Font(color="FFFFFFFF", bold=True)
 FONT_BOLD  = Font(bold=True)
-FONT_DARK  = Font(color="FF000000")
+THIN = Side(style="thin", color="FF808080")
+BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
-THIN_BORDER = Border(
-    left=Side(style="thin"),
-    right=Side(style="thin"),
-    top=Side(style="thin"),
-    bottom=Side(style="thin"),
-)
+NEW_COLUMN_HEADERS = [
+    "CRITICALITY LEVEL",
+    "CLASSIFICATION REASON",
+    "CN NUMBER",
+    "CN REVIEW FLAG",
+    "DATA QUALITY FLAG",
+]
 
-
-def _make_fill(hex_color: str) -> PatternFill:
-    return PatternFill(fill_type="solid", fgColor=hex_color)
-
-
-def _apply_row_fill(ws, row_idx: int, fill: PatternFill, num_cols: int) -> None:
-    for col_idx in range(1, num_cols + 1):
-        cell = ws.cell(row=row_idx, column=col_idx)
-        cell.fill = fill
-        cell.border = THIN_BORDER
+LEVEL_TO_ROMAN = {
+    "Level 1": "I",
+    "Level 2": "II",
+    "Level 3": "III",
+}
 
 
-def _auto_size_columns(ws, max_width: int = 50) -> None:
-    """Set column widths based on content length."""
-    for col_cells in ws.columns:
-        max_len = 0
-        for cell in col_cells:
-            try:
-                if cell.value:
-                    max_len = max(max_len, len(str(cell.value)))
-            except Exception:
-                pass
-        col_letter = get_column_letter(col_cells[0].column)
-        ws.column_dimensions[col_letter].width = min(max_len + 2, max_width)
+# ─────────────────────────────────────────────────────────────────────────────
+# Public entry
+# ─────────────────────────────────────────────────────────────────────────────
 
-
-def _row_color_key(row: pd.Series) -> str:
-    """Determine the color key for a classified row."""
-    scope_result = str(row.get("Scope_Filter_Result", "")).strip()
-    if scope_result == "Excluded":
-        return "EXCLUDED"
-    review = str(row.get("Review_Flag", "")).strip()
-    if review == "NEEDS REVIEW":
-        return "NEEDS REVIEW"
-    level = str(row.get("Level", "")).strip()
-    if level in COLORS:
-        return level
-    return "NEEDS REVIEW"
-
-
-def write_classified_sheet(
-    wb: openpyxl.Workbook,
-    classified_df: pd.DataFrame,
-    excluded_df: pd.DataFrame,
-) -> None:
-    """
-    Write the 'Classified Lines' sheet.
-    In-scope rows first, excluded rows appended at the bottom.
-    """
-    ws = wb.active
-    ws.title = "Classified Lines"
-
-    # Build combined DataFrame
-    classified_with_scope = classified_df.copy()
-    classified_with_scope["Scope_Filter_Result"] = "In Scope"
-
-    excluded_with_scope = excluded_df.copy()
-    excluded_with_scope["Scope_Filter_Result"] = "Excluded"
-    excluded_with_scope["Level"] = ""
-    excluded_with_scope["Classification_Reason"] = "Line excluded from stress scope"
-    excluded_with_scope["Review_Flag"] = "EXCLUDED"
-
-    combined = pd.concat([classified_with_scope, excluded_with_scope], ignore_index=True)
-
-    # Reorder columns: put new columns near the front after line_number and scope
-    priority_cols = ["line_number", "scope", "Scope_Filter_Result", "Level",
-                     "Classification_Reason", "Review_Flag"]
-    other_cols = [c for c in combined.columns if c not in priority_cols]
-    ordered_cols = priority_cols + other_cols
-    ordered_cols = [c for c in ordered_cols if c in combined.columns]
-    combined = combined[ordered_cols]
-
-    # ── Write header row ─────────────────────────────────────────────────────
-    header_fill = _make_fill(COLORS["HEADER"])
-    for col_idx, col_name in enumerate(combined.columns, start=1):
-        cell = ws.cell(row=1, column=col_idx)
-        cell.value = col_name
-        cell.fill = header_fill
-        cell.font = FONT_WHITE
-        cell.alignment = Alignment(horizontal="center", wrap_text=True)
-        cell.border = THIN_BORDER
-
-    # ── Write data rows ───────────────────────────────────────────────────────
-    for row_idx, (_, data_row) in enumerate(combined.iterrows(), start=2):
-        color_key = _row_color_key(data_row)
-        fill = _make_fill(COLORS[color_key])
-
-        for col_idx, col_name in enumerate(combined.columns, start=1):
-            cell = ws.cell(row=row_idx, column=col_idx)
-            val = data_row[col_name]
-            cell.value = "" if pd.isna(val) else val
-            cell.fill = fill
-            cell.border = THIN_BORDER
-            cell.alignment = Alignment(wrap_text=False)
-
-        _apply_row_fill(ws, row_idx, fill, len(combined.columns))
-
-    # ── Formatting ────────────────────────────────────────────────────────────
-    ws.freeze_panes = "A2"
-    _auto_size_columns(ws)
-
-
-def write_summary_sheet(
-    wb: openpyxl.Workbook,
-    classified_df: pd.DataFrame,
-    excluded_df: pd.DataFrame,
-) -> None:
-    """Write the 'Summary' sheet with count breakdowns."""
-    ws = wb.create_sheet(title="Summary")
-
-    total_in_scope = len(classified_df)
-    total_excluded = len(excluded_df)
-    total_all = total_in_scope + total_excluded
-
-    level1_count = int((classified_df.get("Level", pd.Series()) == "Level 1").sum())
-    level2_count = int((classified_df.get("Level", pd.Series()) == "Level 2").sum())
-    level3_count = int((classified_df.get("Level", pd.Series()) == "Level 3").sum())
-    review_count = int((classified_df.get("Review_Flag", pd.Series()) == "NEEDS REVIEW").sum())
-
-    rows = [
-        ("SCLL Tool — Classification Summary", None),
-        (None, None),
-        ("Metric", "Count"),
-        ("Total lines received", total_all),
-        ("Lines in JESA scope (classified)", total_in_scope),
-        ("Lines excluded (Vendor / Client)", total_excluded),
-        (None, None),
-        ("Level 1 — Rigorous analysis required", level1_count),
-        ("Level 2 — Normal analysis required", level2_count),
-        ("Level 3 — Visual / approximate check", level3_count),
-        ("Flagged: NEEDS REVIEW (missing data)", review_count),
-        (None, None),
-        ("Color Legend", ""),
-        ("Level 1", "Red"),
-        ("Level 2", "Orange"),
-        ("Level 3", "Green"),
-        ("Excluded", "Grey"),
-        ("Needs Review", "Yellow"),
-    ]
-
-    header_fill  = _make_fill(COLORS["SUMMARY_HDR"])
-    l1_fill      = _make_fill(COLORS["Level 1"])
-    l2_fill      = _make_fill(COLORS["Level 2"])
-    l3_fill      = _make_fill(COLORS["Level 3"])
-    excl_fill    = _make_fill(COLORS["EXCLUDED"])
-    review_fill  = _make_fill(COLORS["NEEDS REVIEW"])
-
-    color_map = {
-        "Level 1": l1_fill,
-        "Level 2": l2_fill,
-        "Level 3": l3_fill,
-        "Excluded": excl_fill,
-        "Needs Review": review_fill,
-    }
-
-    for r_idx, (label, value) in enumerate(rows, start=1):
-        c1 = ws.cell(row=r_idx, column=1, value=label)
-        c2 = ws.cell(row=r_idx, column=2, value=value)
-
-        if r_idx == 1:
-            c1.font = Font(bold=True, size=13, color="FF1F4E79")
-            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=2)
-        elif label == "Metric":
-            for cell in (c1, c2):
-                cell.fill = header_fill
-                cell.font = FONT_WHITE
-                cell.alignment = Alignment(horizontal="center")
-                cell.border = THIN_BORDER
-        elif label in color_map:
-            c1.fill = color_map[label]
-            c2.fill = color_map[label]
-            c1.border = THIN_BORDER
-            c2.border = THIN_BORDER
-        elif label and label.startswith("Level"):
-            c1.border = THIN_BORDER
-            c2.border = THIN_BORDER
-        elif label and label not in (None, "Color Legend", "SCLL Tool — Classification Summary"):
-            c1.border = THIN_BORDER
-            c2.border = THIN_BORDER
-
-    ws.column_dimensions["A"].width = 42
-    ws.column_dimensions["B"].width = 12
-
-
-def write_cn_proposals_sheet(wb: openpyxl.Workbook, cn_proposals: list) -> None:
-    """Write the 'CN Proposals' sheet — one row per proposed CN."""
-    ws = wb.create_sheet(title="CN Proposals")
-
-    headers = [
-        "CN Number", "Review Flag", "Lines in CN", "Equipment Tags",
-        "Area / Unit", "Min Temp (°C)", "Max Temp (°C)", "Delta T (°C)",
-        "Line Count", "Grouping Reason", "Engineer Notes",
-    ]
-
-    flag_colors = {
-        "[AUTO-CONFIRMED]":     "FF92D050",  # green
-        "[REVIEW-TEMPERATURE]": "FFFFFF99",  # yellow
-        "[REVIEW-MODEL-SIZE]":  "FFFFC266",  # orange
-        "[REVIEW-MISSING-DATA]": "FFFF9999", # red
-        "[REVIEW-AREA-CONFLICT]": "FFFFC266",
-        "[REVIEW-MANUAL]":      "FFFFFF99",
-    }
-
-    header_fill = _make_fill(COLORS["HEADER"])
-    for col_idx, hdr in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=col_idx, value=hdr)
-        cell.fill = header_fill
-        cell.font = FONT_WHITE
-        cell.alignment = Alignment(horizontal="center", wrap_text=True)
-        cell.border = THIN_BORDER
-
-    for row_idx, proposal in enumerate(cn_proposals, start=2):
-        flag   = proposal.get("review_flag", "")
-        color  = flag_colors.get(flag, "FFFFFFFF")
-        fill   = _make_fill(color)
-
-        values = [
-            proposal.get("cn_number", ""),
-            flag,
-            ", ".join(proposal.get("line_numbers", [])),
-            ", ".join(proposal.get("equipment_tags", [])),
-            ", ".join(proposal.get("area_codes", [])) or "—",
-            proposal.get("min_temperature", ""),
-            proposal.get("max_temperature", ""),
-            proposal.get("delta_t", ""),
-            proposal.get("line_count", ""),
-            proposal.get("grouping_reason", ""),
-            "",  # Engineer Notes — blank for engineer to fill
-        ]
-
-        for col_idx, val in enumerate(values, start=1):
-            cell = ws.cell(row=row_idx, column=col_idx)
-            cell.value = "" if val is None else val
-            cell.fill = fill
-            cell.border = THIN_BORDER
-            cell.alignment = Alignment(wrap_text=(col_idx == 10))  # wrap reason column
-
-    ws.freeze_panes = "A2"
-    _auto_size_columns(ws)
-    # Widen the reason and lines columns
-    ws.column_dimensions["C"].width = 40
-    ws.column_dimensions["J"].width = 60
-    ws.column_dimensions["K"].width = 30
-
-
-def write_dashboard_sheet(
-    wb: openpyxl.Workbook,
-    classified_df: pd.DataFrame,
-    cn_proposals: list,
-) -> None:
-    """Write the 'Dashboard' sheet with CN summary statistics."""
-    ws = wb.create_sheet(title="Dashboard")
-
-    l1_total = int((classified_df.get("Level", pd.Series()) == "Level 1").sum())
-    total_cns = len(cn_proposals)
-
-    flag_counts: dict[str, int] = {}
-    for p in cn_proposals:
-        flag = p.get("review_flag", "")
-        flag_counts[flag] = flag_counts.get(flag, 0) + 1
-
-    auto_confirmed  = flag_counts.get("[AUTO-CONFIRMED]", 0)
-    rev_temp        = flag_counts.get("[REVIEW-TEMPERATURE]", 0)
-    rev_size        = flag_counts.get("[REVIEW-MODEL-SIZE]", 0)
-    rev_missing     = flag_counts.get("[REVIEW-MISSING-DATA]", 0)
-    rev_area        = flag_counts.get("[REVIEW-AREA-CONFLICT]", 0)
-    rev_manual      = flag_counts.get("[REVIEW-MANUAL]", 0)
-    total_flagged   = total_cns - auto_confirmed
-
-    assigned_lines   = sum(p["line_count"] for p in cn_proposals if "[REVIEW-MISSING-DATA]" not in p["review_flag"])
-    unassigned_lines = sum(p["line_count"] for p in cn_proposals if "[REVIEW-MISSING-DATA]" in p["review_flag"])
-
-    rows = [
-        ("SCLL Tool — CN Assignment Dashboard", None, None),
-        (None, None, None),
-        ("Metric", "Count", "Notes"),
-        ("Total Level 1 lines",            l1_total,        "Eligible for CN assignment"),
-        ("Lines with CN assigned",         assigned_lines,  ""),
-        ("Lines unassigned (missing data)", unassigned_lines, "Engineer action required"),
-        (None, None, None),
-        ("Total proposed CNs",             total_cns,       ""),
-        ("CNs auto-confirmed",             auto_confirmed,  "All boundary rules applied cleanly"),
-        ("CNs flagged for review",         total_flagged,   "Engineer must approve before analysis"),
-        (None, None, None),
-        ("  — REVIEW-TEMPERATURE",         rev_temp,        f"Delta T > threshold between connected lines"),
-        ("  — REVIEW-MODEL-SIZE",          rev_size,        "CN exceeds max lines per model"),
-        ("  — REVIEW-MISSING-DATA",        rev_missing,     "Equipment tags missing"),
-        ("  — REVIEW-AREA-CONFLICT",       rev_area,        "Lines from different areas in same network"),
-        ("  — REVIEW-MANUAL",              rev_manual,      "Single line, P&ID confirmation needed"),
-        (None, None, None),
-        ("CN Status Legend", "", ""),
-        ("PROPOSED",   "", "Initial tool output — engineer has not reviewed yet"),
-        ("CONFIRMED",  "", "Engineer approved the CN grouping"),
-        ("REVISED",    "", "Engineer changed the grouping"),
-    ]
-
-    header_fill   = _make_fill(COLORS["SUMMARY_HDR"])
-    title_font    = Font(bold=True, size=13, color="FF1F4E79")
-    section_fill  = _make_fill("FFE2EFDA")   # light green tint for confirmed
-    flag_fill     = _make_fill(COLORS["NEEDS REVIEW"])
-    auto_fill     = _make_fill(COLORS["Level 3"])
-
-    for r_idx, (label, value, note) in enumerate(rows, start=1):
-        c1 = ws.cell(row=r_idx, column=1, value=label)
-        c2 = ws.cell(row=r_idx, column=2, value=value)
-        c3 = ws.cell(row=r_idx, column=3, value=note)
-
-        if r_idx == 1:
-            c1.font = title_font
-            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=3)
-        elif label == "Metric":
-            for cell in (c1, c2, c3):
-                cell.fill = header_fill
-                cell.font = FONT_WHITE
-                cell.alignment = Alignment(horizontal="center")
-                cell.border = THIN_BORDER
-        elif label and "REVIEW" in str(label):
-            for cell in (c1, c2, c3):
-                cell.fill = flag_fill
-                cell.border = THIN_BORDER
-        elif label == "CNs auto-confirmed":
-            for cell in (c1, c2, c3):
-                cell.fill = auto_fill
-                cell.border = THIN_BORDER
-        elif label and label not in (None, "CN Status Legend", "SCLL Tool — CN Assignment Dashboard"):
-            for cell in (c1, c2, c3):
-                cell.border = THIN_BORDER
-
-    ws.column_dimensions["A"].width = 38
-    ws.column_dimensions["B"].width = 10
-    ws.column_dimensions["C"].width = 45
-
-
-def write_output(
-    classified_df: pd.DataFrame,
-    excluded_df: pd.DataFrame,
+def write_enriched_output(
+    input_path: str,
     output_path: str,
-    rules: dict,
-    cn_proposals: list | None = None,
+    detected_config: dict,
+    enriched_df: pd.DataFrame,
+    cn_proposals: list[dict],
 ) -> None:
     """
-    Create the output workbook.
-    Sheets written:
-      1. Classified Lines
-      2. Summary
-      3. CN Proposals  (only if cn_proposals is non-empty)
-      4. Dashboard     (only if cn_proposals is non-empty)
-    """
-    if cn_proposals is None:
-        cn_proposals = []
+    Enrich the original workbook and save to output_path.
 
-    wb = openpyxl.Workbook()
-    write_classified_sheet(wb, classified_df, excluded_df)
-    write_summary_sheet(wb, classified_df, excluded_df)
-    if cn_proposals:
-        write_cn_proposals_sheet(wb, cn_proposals)
-        write_dashboard_sheet(wb, classified_df, cn_proposals)
+    enriched_df must be the full row-ordered DataFrame (in-scope + excluded
+    combined, indexed 0..N-1 matching the original Excel read order) with
+    columns Level, Classification_Reason, Data_Quality_Flag, CN_Number,
+    CN_Review_Flag already populated.
+    """
+    wb = openpyxl.load_workbook(input_path)
+
+    sheet_name = detected_config.get("sheet_name")
+    if sheet_name and sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+    else:
+        ws = wb.active
+
+    _append_new_columns(ws, detected_config, enriched_df)
+    _write_summary_sheet(wb, enriched_df, cn_proposals)
+    _write_cn_proposals_sheet(wb, cn_proposals)
 
     try:
         wb.save(output_path)
@@ -406,3 +103,289 @@ def write_output(
             f"Cannot write to '{output_path}'. "
             f"If the file is open in Excel, please close it first."
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Append 5 new columns to the original sheet
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _append_new_columns(
+    ws, detected_config: dict, enriched_df: pd.DataFrame
+) -> None:
+    header_row_1based = int(detected_config.get("header_row", 0)) + 1
+    skip_rows_0based  = set(detected_config.get("skip_rows", []) or [])
+
+    data_excel_rows = _compute_data_row_indices(ws, header_row_1based, skip_rows_0based)
+
+    # Detect first empty column to the right of existing content
+    existing_cols = ws.max_column
+    # Try to find the last column that actually has a header value
+    last_with_header = existing_cols
+    for c in range(existing_cols, 0, -1):
+        if ws.cell(row=header_row_1based, column=c).value not in (None, ""):
+            last_with_header = c
+            break
+    first_new_col = last_with_header + 1
+
+    # Header style — mimic header row if possible, else dark navy
+    header_fill = _make_fill(COLORS["HEADER"])
+    header_template = ws.cell(row=header_row_1based, column=last_with_header)
+
+    for offset, label in enumerate(NEW_COLUMN_HEADERS):
+        cell = ws.cell(row=header_row_1based, column=first_new_col + offset, value=label)
+        try:
+            cell.font = copy(header_template.font) if header_template.font else FONT_WHITE
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.fill = header_fill
+            cell.font = FONT_WHITE
+            cell.border = BORDER
+        except Exception:
+            cell.fill = header_fill
+            cell.font = FONT_WHITE
+            cell.alignment = Alignment(horizontal="center", wrap_text=True)
+            cell.border = BORDER
+
+    # Write each data row's 5 new values; match by sequential position
+    n_rows = min(len(enriched_df), len(data_excel_rows))
+    for df_pos in range(n_rows):
+        row = enriched_df.iloc[df_pos]
+        excel_row = data_excel_rows[df_pos]
+
+        level_raw = str(row.get("Level", "") or "")
+        level_roman = LEVEL_TO_ROMAN.get(level_raw, "")
+        classification_reason = str(row.get("Classification_Reason", "") or "")
+        cn_number = str(row.get("CN_Number", "") or "")
+        cn_flag   = str(row.get("CN_Review_Flag", "") or "")
+        data_quality = str(row.get("Data_Quality_Flag", "") or "")
+
+        values = [level_roman, classification_reason, cn_number, cn_flag, data_quality]
+        row_fill = _row_fill_for(level_raw, data_quality)
+
+        for offset, val in enumerate(values):
+            c = ws.cell(row=excel_row, column=first_new_col + offset, value=val)
+            if row_fill is not None:
+                c.fill = row_fill
+            c.border = BORDER
+            if offset in (1, 2, 3, 4):
+                c.alignment = Alignment(wrap_text=True, vertical="top")
+            else:
+                c.alignment = Alignment(horizontal="center", vertical="center", bold=False) \
+                    if False else Alignment(horizontal="center", vertical="center")
+
+        # Grey out the whole original row if excluded by scope
+        if data_quality.startswith("SCOPE:"):
+            grey_fill = _make_fill(COLORS["EXCLUDED"])
+            for c_idx in range(1, first_new_col + len(NEW_COLUMN_HEADERS)):
+                cell = ws.cell(row=excel_row, column=c_idx)
+                cell.fill = grey_fill
+
+    # Set widths on the new columns
+    widths = [18, 60, 14, 22, 28]
+    for offset, w in enumerate(widths):
+        letter = get_column_letter(first_new_col + offset)
+        ws.column_dimensions[letter].width = w
+
+
+def _compute_data_row_indices(
+    ws, header_row_1based: int, skip_rows_0based: set[int]
+) -> list[int]:
+    """
+    Return the list of openpyxl row numbers that correspond to the pandas
+    data rows, matching exactly what pandas read (applies same skip_rows and
+    blank-row handling as parser.read_linelist).
+
+    skip_rows_0based are relative to the pandas read (i.e. after header).
+    """
+    max_col = ws.max_column
+    result: list[int] = []
+    data_counter = 0  # counts data rows produced by pandas (after skip_rows, before dropna)
+    for excel_row in range(header_row_1based + 1, ws.max_row + 1):
+        # Is this the units row or an explicit skip?
+        # pandas skiprows here are given relative to the original file *by position*,
+        # but we conservatively treat skip_rows_0based as the offsets of data rows
+        # to skip after the header. Most detectors emit [header_row+1] which means
+        # "skip the units row immediately below the header".
+        if excel_row - 1 in skip_rows_0based:
+            continue
+        # Blank row check — pandas dropna(how="all") drops rows that are entirely empty
+        row_values = [ws.cell(row=excel_row, column=c).value for c in range(1, max_col + 1)]
+        if all(v is None or (isinstance(v, str) and not v.strip()) for v in row_values):
+            continue
+        result.append(excel_row)
+        data_counter += 1
+    return result
+
+
+def _row_fill_for(level: str, data_quality: str) -> Optional[PatternFill]:
+    """Pick the cell fill colour for the 5 new cells on a data row."""
+    if data_quality.startswith("SCOPE:"):
+        return _make_fill(COLORS["EXCLUDED"])
+    if data_quality.startswith("MISSING") or data_quality == "AMBIGUOUS":
+        return _make_fill(COLORS["REVIEW"])
+    if level == "Level 1":
+        return _make_fill(COLORS["LEVEL_I"])
+    if level == "Level 2":
+        return _make_fill(COLORS["LEVEL_II"])
+    if level == "Level 3":
+        return _make_fill(COLORS["LEVEL_III"])
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. SUMMARY sheet
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _write_summary_sheet(wb, enriched_df: pd.DataFrame, cn_proposals: list[dict]) -> None:
+    if "SUMMARY" in wb.sheetnames:
+        del wb["SUMMARY"]
+    ws = wb.create_sheet(title="SUMMARY")
+
+    total = len(enriched_df)
+    scope_excluded = int(enriched_df.get("Data_Quality_Flag", pd.Series([], dtype=str))
+                         .astype(str).str.startswith("SCOPE:").sum())
+    in_scope = total - scope_excluded
+
+    level_series = enriched_df.get("Level", pd.Series([], dtype=str)).astype(str)
+    l1 = int((level_series == "Level 1").sum())
+    l2 = int((level_series == "Level 2").sum())
+    l3 = int((level_series == "Level 3").sum())
+
+    dq_series = enriched_df.get("Data_Quality_Flag", pd.Series([], dtype=str)).astype(str)
+    missing = int(dq_series.str.startswith("MISSING").sum())
+    ambiguous = int((dq_series == "AMBIGUOUS").sum())
+
+    total_cns = len(cn_proposals)
+    auto_cns = sum(1 for p in cn_proposals if p.get("review_flag") == "AUTO-CONFIRMED")
+    standalone_cns = sum(1 for p in cn_proposals if p.get("review_flag") == "REVIEW-STANDALONE")
+    large_cns = sum(1 for p in cn_proposals if p.get("review_flag") == "REVIEW-LARGE-CN")
+
+    rows = [
+        ("SCLL Tool — Classification Summary", None),
+        (None, None),
+        ("Metric", "Count"),
+        ("Total lines in file", total),
+        ("Lines in scope", in_scope),
+        ("Lines excluded (vendor/client/licensor)", scope_excluded),
+        (None, None),
+        ("Criticality I (rigorous analysis)", l1),
+        ("Criticality II (normal analysis)", l2),
+        ("Criticality III (visual check)", l3),
+        ("Missing data (cannot classify)", missing),
+        ("Ambiguous data", ambiguous),
+        (None, None),
+        ("CN Summary", None),
+        ("Total CNs proposed", total_cns),
+        ("CNs auto-confirmed", auto_cns),
+        ("CNs flagged REVIEW-LARGE-CN", large_cns),
+        ("CNs flagged REVIEW-STANDALONE", standalone_cns),
+        (None, None),
+        ("Color legend", None),
+        ("Criticality I", "Red"),
+        ("Criticality II", "Orange"),
+        ("Criticality III", "Green"),
+        ("Excluded (out of scope)", "Grey"),
+        ("Needs review (missing/ambiguous)", "Yellow"),
+    ]
+
+    summary_hdr = _make_fill(COLORS["SUMMARY_HDR"])
+    legend_fills = {
+        "Criticality I":                     _make_fill(COLORS["LEVEL_I"]),
+        "Criticality II":                    _make_fill(COLORS["LEVEL_II"]),
+        "Criticality III":                   _make_fill(COLORS["LEVEL_III"]),
+        "Excluded (out of scope)":           _make_fill(COLORS["EXCLUDED"]),
+        "Needs review (missing/ambiguous)":  _make_fill(COLORS["REVIEW"]),
+    }
+
+    for r_idx, (label, value) in enumerate(rows, start=1):
+        c1 = ws.cell(row=r_idx, column=1, value=label)
+        c2 = ws.cell(row=r_idx, column=2, value=value)
+
+        if r_idx == 1:
+            c1.font = Font(bold=True, size=14, color="FF1F4E79")
+            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=2)
+        elif label == "Metric":
+            for cc in (c1, c2):
+                cc.fill = summary_hdr; cc.font = FONT_WHITE
+                cc.alignment = Alignment(horizontal="center"); cc.border = BORDER
+        elif label == "CN Summary" or label == "Color legend":
+            c1.font = FONT_BOLD
+        elif label in legend_fills:
+            c1.fill = legend_fills[label]; c2.fill = legend_fills[label]
+            c1.border = BORDER; c2.border = BORDER
+        elif label and label not in (None,):
+            c1.border = BORDER; c2.border = BORDER
+
+    ws.column_dimensions["A"].width = 42
+    ws.column_dimensions["B"].width = 14
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. CN PROPOSALS sheet
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _write_cn_proposals_sheet(wb, cn_proposals: list[dict]) -> None:
+    if "CN PROPOSALS" in wb.sheetnames:
+        del wb["CN PROPOSALS"]
+    ws = wb.create_sheet(title="CN PROPOSALS")
+
+    headers = [
+        "CN NUMBER", "REVIEW FLAG", "LINES IN CN", "EQUIPMENT TAGS",
+        "MIN TEMP (°C)", "MAX TEMP (°C)", "ΔT (°C)",
+        "LINE COUNT", "GROUPING REASON", "ENGINEER NOTES",
+    ]
+
+    hdr_fill = _make_fill(COLORS["HEADER"])
+    for col_idx, h in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.fill = hdr_fill; cell.font = FONT_WHITE
+        cell.alignment = Alignment(horizontal="center", wrap_text=True)
+        cell.border = BORDER
+
+    flag_colors = {
+        "AUTO-CONFIRMED":     COLORS["FLAG_GOOD"],
+        "REVIEW-LARGE-CN":    COLORS["FLAG_WARN"],
+        "REVIEW-STANDALONE":  COLORS["FLAG_BAD"],
+    }
+
+    for r_idx, p in enumerate(cn_proposals, start=2):
+        flag = p.get("review_flag", "")
+        fill = _make_fill(flag_colors.get(flag, "FFFFFFFF"))
+        vals = [
+            p.get("cn_number", ""),
+            flag,
+            ", ".join(p.get("line_numbers", []) or []),
+            ", ".join(p.get("equipment_tags", []) or []) or "—",
+            _num_or_blank(p.get("min_temperature")),
+            _num_or_blank(p.get("max_temperature")),
+            _num_or_blank(p.get("delta_t")),
+            p.get("line_count", ""),
+            p.get("grouping_reason", ""),
+            "",
+        ]
+        for col_idx, v in enumerate(vals, start=1):
+            cell = ws.cell(row=r_idx, column=col_idx, value=v)
+            cell.fill = fill
+            cell.border = BORDER
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    ws.freeze_panes = "A2"
+    widths = [12, 22, 48, 36, 12, 12, 10, 10, 60, 28]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _make_fill(hex_color: str) -> PatternFill:
+    return PatternFill(fill_type="solid", fgColor=hex_color)
+
+
+def _num_or_blank(val) -> str:
+    if val is None:
+        return ""
+    try:
+        return f"{float(val):.0f}"
+    except (ValueError, TypeError):
+        return str(val)
